@@ -141,7 +141,7 @@ struct SheetsSummaryService {
         let categoryFormulas: [String] = SheetsLayout.categoryValues.map { category in
             "=SUMIF('\(tabTitle)'!B2:B10000,\"\(category)\",'\(tabTitle)'!D2:D10000)"
         }
-        let rowValues: [String] = [tabTitle, "='\(tabTitle)'!G2"] + categoryFormulas
+        let rowValues: [String] = [tabTitle, "='\(tabTitle)'!\(SheetsLayout.totalColumn)2"] + categoryFormulas
         let lastColumn = SheetsHTTP.columnLetter(SheetsLayout.summaryHeaderColumns.count)
         guard let writeURL = URL(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetId)/values/'\(encodedSummaryTitle)'!A\(nextRow):\(lastColumn)\(nextRow)?valueInputOption=USER_ENTERED") else {
             throw SheetsServiceError.invalidResponse

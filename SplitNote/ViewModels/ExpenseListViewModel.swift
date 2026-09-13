@@ -15,6 +15,10 @@ final class ExpenseListViewModel: ObservableObject {
     /// instead of showing an empty list that looks like "no expenses yet".
     @Published private(set) var sheetMissing = false
     @Published private(set) var isCreatingSheet = false
+    /// Riêng với `isLoading` (chỉ hiện spinner toàn màn ở lần load đầu) — cho
+    /// nút reload thủ công, dùng khi có người sửa thẳng trên Sheet mà app
+    /// chưa hay biết.
+    @Published private(set) var isRefreshing = false
     @Published var errorMessage: String?
     @Published var isShowingQuickAdd = false
     @Published private(set) var selectedMonth: Date
@@ -114,6 +118,14 @@ final class ExpenseListViewModel: ObservableObject {
         }
     }
     
+    /// Tải lại danh sách theo yêu cầu thủ công (nút reload) — cho trường hợp
+    /// khoản chi được thêm/sửa thẳng trên Google Sheet, ngoài app.
+    func refreshEntries() async {
+        isRefreshing = true
+        defer { isRefreshing = false }
+        await loadEntries()
+    }
+
     /// Tạo (hoặc tạo lại) tab tháng hiện tại, rồi load lại danh sách (chắc
     /// chắn rỗng vì vừa tạo).
     func createMissingSheet() async {

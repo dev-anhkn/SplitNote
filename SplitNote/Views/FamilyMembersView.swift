@@ -6,9 +6,9 @@
 import SwiftUI
 
 /// Add/remove the names used by "Ai chi"/"Chi cho ai" in a `.family`
-/// workspace. Local-only for now — there's no cross-account invite yet, so
-/// this just types out names rather than adding real Google accounts (see
-/// `WorkspaceStore.members`).
+/// workspace. Nhập tên thường thì chỉ dùng để hiển thị; nhập email thì
+/// `FamilyMembersViewModel` còn tự cấp quyền edit Drive cho email đó, nên
+/// tài khoản Google tương ứng đăng nhập vào app sẽ tự thấy được workspace này.
 struct FamilyMembersView: View {
     @ObservedObject var viewModel: FamilyMembersViewModel
     @Environment(\.dismiss) private var dismiss
@@ -16,13 +16,17 @@ struct FamilyMembersView: View {
 
     var body: some View {
         Form {
-            Section("Thêm thành viên") {
+            Section {
                 HStack {
-                    TextField("Tên thành viên", text: $newMemberName)
+                    TextField("Tên hoặc email Google", text: $newMemberName)
                         .onSubmit(addMember)
                     Button("Thêm", action: addMember)
                         .disabled(newMemberName.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
+            } header: {
+                Text("Thêm thành viên")
+            } footer: {
+                Text("Nhập email Google sẽ tự cấp quyền chỉnh sửa sheet cho người đó — họ đăng nhập đúng email này trong app là thấy workspace ngay.")
             }
 
             Section("Thành viên hiện tại") {

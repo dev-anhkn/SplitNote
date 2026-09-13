@@ -15,7 +15,6 @@ struct ExpenseEntry: Identifiable, Equatable {
     let category: String
     let content: String
     let amount: Decimal
-    let rawNote: String
     /// Empty for a `.personal` workspace, or a row predating the family
     /// feature. Otherwise the name of whoever paid.
     let paidBy: String

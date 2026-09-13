@@ -5,12 +5,12 @@
 
 import Foundation
 
-/// CRUD over one month tab's expense rows (A:E) plus the paired family
-/// columns (I:K) for a `.family` workspace.
+/// CRUD over one month tab's expense rows (A:D) plus the paired family
+/// columns (H:J) for a `.family` workspace.
 struct SheetsRowService {
     nonisolated init() {}
 
-    func appendRow(spreadsheetId: String, tabTitle: String, date: String, category: String, content: String, amount: String, rawNote: String, paidBy: String?, sharedWith: String?) async throws {
+    func appendRow(spreadsheetId: String, tabTitle: String, date: String, category: String, content: String, amount: String, paidBy: String?, sharedWith: String?) async throws {
         let accessToken = try await GoogleAPIAuth.currentAccessToken()
         guard let encodedTitle = SheetsHTTP.percentEncodedTabTitle(tabTitle) else {
             throw SheetsServiceError.invalidResponse
@@ -19,7 +19,7 @@ struct SheetsRowService {
         // dò "cuối bảng" và có thể ghi đè lên hàng deleteRow để trống ở giữa,
         // làm lệch thứ tự các khoản chi còn lại.
         let targetRow = try await nextRowIndex(spreadsheetId: spreadsheetId, encodedTitle: encodedTitle, accessToken: accessToken)
-        guard let url = URL(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetId)/values/'\(encodedTitle)'!A\(targetRow):E\(targetRow)?valueInputOption=USER_ENTERED") else {
+        guard let url = URL(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetId)/values/'\(encodedTitle)'!A\(targetRow):D\(targetRow)?valueInputOption=USER_ENTERED") else {
             throw SheetsServiceError.invalidResponse
         }
         var request = URLRequest(url: url)
@@ -27,7 +27,7 @@ struct SheetsRowService {
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: [
-            "values": [[date, category, content, amount, rawNote]]
+            "values": [[date, category, content, amount]]
         ])
 
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -45,7 +45,7 @@ struct SheetsRowService {
         guard let encodedTitle = SheetsHTTP.percentEncodedTabTitle(tabTitle) else {
             throw SheetsServiceError.invalidResponse
         }
-        guard let url = URL(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetId)/values/'\(encodedTitle)'!A2:K10000") else {
+        guard let url = URL(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetId)/values/'\(encodedTitle)'!A2:J10000") else {
             throw SheetsServiceError.invalidResponse
         }
         var request = URLRequest(url: url)
@@ -58,7 +58,7 @@ struct SheetsRowService {
         }
 
         // Hàng 2 là hàng dữ liệu đầu tiên; bỏ qua hàng không có số tiền hợp lệ.
-        // Đọc rộng tới K để lấy luôn Ai chi (I)/Chi cho ai (J) — F/G/H (spacer,
+        // Đọc rộng tới J để lấy luôn Ai chi (H)/Chi cho ai (I) — E/F/G (spacer,
         // Tổng cộng, spacer) nằm giữa nhưng không được dùng tới.
         let rows = json["values"] as? [[String]] ?? []
         return rows.enumerated().compactMap { offset, row in
@@ -73,14 +73,13 @@ struct SheetsRowService {
                 category: row.indices.contains(1) ? row[1] : "",
                 content: row.indices.contains(2) ? row[2] : "",
                 amount: amount,
-                rawNote: row.indices.contains(4) ? row[4] : "",
-                paidBy: row.indices.contains(8) ? row[8] : "",
-                sharedWith: row.indices.contains(9) ? row[9] : ""
+                paidBy: row.indices.contains(7) ? row[7] : "",
+                sharedWith: row.indices.contains(8) ? row[8] : ""
             )
         }
     }
 
-    /// Ghi thẳng B:D của `rowIndex` bằng `values.update` — không đụng Ngày/Ghi chú gốc.
+    /// Ghi thẳng B:D của `rowIndex` bằng `values.update` — không đụng Ngày.
     func updateRow(spreadsheetId: String, tabTitle: String, rowIndex: Int, category: String, content: String, amount: String, paidBy: String?, sharedWith: String?) async throws {
         let accessToken = try await GoogleAPIAuth.currentAccessToken()
         guard let encodedTitle = SheetsHTTP.percentEncodedTabTitle(tabTitle) else {
@@ -106,14 +105,14 @@ struct SheetsRowService {
     }
 
     /// `values.clear` thay vì xoá hẳn hàng: xoá hẳn sẽ dịch chuyển các hàng
-    /// dưới, làm lệch `rowIndex` của các khoản chi khác và công thức Tổng cộng
-    /// (cột G). Để trống A:E thì `fetchRows` tự bỏ qua hàng đó.
+    /// dưới, làm lệch `rowIndex` của các khoản chi khác và công thức Tổng cộng.
+    /// Để trống A:D thì `fetchRows` tự bỏ qua hàng đó.
     func deleteRow(spreadsheetId: String, tabTitle: String, rowIndex: Int) async throws {
         let accessToken = try await GoogleAPIAuth.currentAccessToken()
         guard let encodedTitle = SheetsHTTP.percentEncodedTabTitle(tabTitle) else {
             throw SheetsServiceError.invalidResponse
         }
-        guard let url = URL(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetId)/values/'\(encodedTitle)'!A\(rowIndex):E\(rowIndex):clear") else {
+        guard let url = URL(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetId)/values/'\(encodedTitle)'!A\(rowIndex):D\(rowIndex):clear") else {
             throw SheetsServiceError.invalidResponse
         }
         var request = URLRequest(url: url)
@@ -125,9 +124,9 @@ struct SheetsRowService {
         let (data, response) = try await URLSession.shared.data(for: request)
         try SheetsHTTP.validate(response, data: data)
 
-        // Xoá luôn I:K nếu tab này có cột gia đình — vô hại với tab cá nhân
+        // Xoá luôn H:J nếu tab này có cột gia đình — vô hại với tab cá nhân
         // (không có gì ở đó để xoá).
-        guard let familyURL = URL(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetId)/values/'\(encodedTitle)'!I\(rowIndex):K\(rowIndex):clear") else {
+        guard let familyURL = URL(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetId)/values/'\(encodedTitle)'!H\(rowIndex):J\(rowIndex):clear") else {
             throw SheetsServiceError.invalidResponse
         }
         var familyRequest = URLRequest(url: familyURL)
@@ -139,12 +138,12 @@ struct SheetsRowService {
         try SheetsHTTP.validate(familyResponse, data: familyData)
     }
 
-    /// Writes I:K (Ai chi/Chi cho ai/Số người chia) for one row — shared by
-    /// `appendRow` and `updateRow`. `K` is always rewritten as a formula
-    /// referencing `J` on the same row, so it self-corrects if `sharedWith`
+    /// Writes H:J (Ai chi/Chi cho ai/Số người chia) for one row — shared by
+    /// `appendRow` and `updateRow`. `J` is always rewritten as a formula
+    /// referencing `I` on the same row, so it self-corrects if `sharedWith`
     /// changes on an edit.
     private func writeFamilyRow(spreadsheetId: String, encodedTitle: String, row: Int, paidBy: String, sharedWith: String, accessToken: String) async throws {
-        guard let url = URL(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetId)/values/'\(encodedTitle)'!I\(row):K\(row)?valueInputOption=USER_ENTERED") else {
+        guard let url = URL(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetId)/values/'\(encodedTitle)'!H\(row):J\(row)?valueInputOption=USER_ENTERED") else {
             throw SheetsServiceError.invalidResponse
         }
         var request = URLRequest(url: url)
@@ -153,7 +152,7 @@ struct SheetsRowService {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         // Đếm số tên trong "Chi cho ai" bằng số dấu phẩy + 1, thay vì lưu số
         // cứng — sửa lại danh sách người chia thì số người chia tự cập nhật.
-        let countFormula = "=IF(J\(row)=\"\",0,LEN(J\(row))-LEN(SUBSTITUTE(J\(row),\",\",\"\"))+1)"
+        let countFormula = "=IF(I\(row)=\"\",0,LEN(I\(row))-LEN(SUBSTITUTE(I\(row),\",\",\"\"))+1)"
         request.httpBody = try JSONSerialization.data(withJSONObject: [
             "values": [[paidBy, sharedWith, countFormula]]
         ])
@@ -162,10 +161,10 @@ struct SheetsRowService {
     }
 
     /// 1-based row right after the last row (from row 2) that still has data
-    /// in A:E — `deleteRow` blanks a row in place rather than removing it, so
+    /// in A:D — `deleteRow` blanks a row in place rather than removing it, so
     /// a gap must be skipped over, not reused.
     private func nextRowIndex(spreadsheetId: String, encodedTitle: String, accessToken: String) async throws -> Int {
-        guard let url = URL(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetId)/values/'\(encodedTitle)'!A2:E10000") else {
+        guard let url = URL(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetId)/values/'\(encodedTitle)'!A2:D10000") else {
             throw SheetsServiceError.invalidResponse
         }
         var request = URLRequest(url: url)

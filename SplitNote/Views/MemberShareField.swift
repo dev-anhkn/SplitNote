@@ -5,56 +5,85 @@
 
 import SwiftUI
 
-/// "Chi cho ai" multi-select: a row of tappable chips — "Tất cả" plus one
-/// per member. Never lets `selectedMembers` end up empty (the view model's
-/// `didSet` already guards this too; this is just belt-and-suspenders for
-/// the tap gesture itself).
+/// "Chi cho ai" multi-select — 1 hàng giống `Picker` ("Ai chi"): nhãn bên
+/// trái, bên phải là nút tóm tắt ("Tất cả" hoặc tên đã chọn) mở popover
+/// checklist. Dùng `.popover` thay vì `Menu` vì `Menu` tự đóng sau mỗi lần
+/// chọn — không chọn được nhiều người trong 1 lần mở. Never lets
+/// `selectedMembers` end up empty — an empty set has no meaningful "chia
+/// đều" denominator.
 struct MemberShareField: View {
     let members: [String]
     @Binding var selectedMembers: Set<String>
+    @State private var isShowingPicker = false
 
     private var isAll: Bool { selectedMembers.count == members.count }
 
+    private var summaryLabel: String {
+        isAll ? "Tất cả" : members.filter(selectedMembers.contains).joined(separator: ", ")
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        HStack {
             Text("Chi cho ai")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    chip("Tất cả", isOn: isAll) {
-                        selectedMembers = Set(members)
-                    }
-                    ForEach(members, id: \.self) { member in
-                        chip(member, isOn: selectedMembers.contains(member)) {
-                            toggle(member)
-                        }
-                    }
+            Spacer()
+            Button {
+                isShowingPicker = true
+            } label: {
+                HStack(spacing: 4) {
+                    Text(summaryLabel)
+                        .lineLimit(1)
+                        .foregroundStyle(.secondary)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .buttonStyle(.plain)
+            .popover(isPresented: $isShowingPicker) {
+                checklist
+            }
+        }
+    }
+
+    private var checklist: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            checklistRow("Tất cả", isOn: isAll) {
+                selectedMembers = Set(members)
+            }
+            Divider()
+            ForEach(members, id: \.self) { member in
+                checklistRow(member, isOn: selectedMembers.contains(member)) {
+                    toggle(member)
                 }
             }
         }
-        .padding(.vertical, 4)
+        .padding(8)
+        .frame(minWidth: 220)
+    }
+
+    private func checklistRow(_ title: String, isOn: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack {
+                Image(systemName: "checkmark")
+                    .opacity(isOn ? 1 : 0)
+                    .frame(width: 16)
+                Text(title)
+                Spacer()
+            }
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private func toggle(_ member: String) {
         if selectedMembers.contains(member) {
+            // Không cho bỏ chọn nốt người cuối cùng.
+            guard selectedMembers.count > 1 else { return }
             selectedMembers.remove(member)
         } else {
             selectedMembers.insert(member)
         }
-    }
-
-    private func chip(_ title: String, isOn: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(.subheadline)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(isOn ? Color.accentColor : Color.gray.opacity(0.2))
-                .foregroundStyle(isOn ? Color.white : Color.primary)
-                .clipShape(Capsule())
-        }
-        .buttonStyle(.plain)
     }
 }
 

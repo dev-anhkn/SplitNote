@@ -85,6 +85,13 @@ struct WorkspaceDiscoveryService {
         return errorMessage
     }
 
+    /// Re-searches Drive for one slot's tagged spreadsheet — used to self-heal
+    /// a stale cached id (e.g. the old file was trashed/recreated outside the
+    /// app) right when opening it fails, instead of requiring a full sign-out.
+    func rediscoverWorkspace(type: WorkspaceType, index: Int) async throws -> String? {
+        try await Self.findTaggedFile(driveService: driveService, type: type, index: index)
+    }
+
     static func tagValue(type: WorkspaceType, index: Int) -> String {
         "\(type.rawValue)_\(index)"
     }

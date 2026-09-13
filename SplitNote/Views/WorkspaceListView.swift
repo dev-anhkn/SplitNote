@@ -65,34 +65,16 @@ struct WorkspaceListView: View {
                 }
             }
         }
+        // Neo riêng cạnh danh sách workspace thay vì bỏ vào toolbar hệ thống
+        // — trên macOS, toolbar hay tự gộp các nút lại thành 1 nút overflow
+        // khi cửa sổ hẹp, khiến nút + bị lẫn chung với menu Sign Out.
+        .safeAreaInset(edge: .top) {
+            if !viewModel.isLoadingWorkspaces {
+                sidebarActions
+            }
+        }
         .navigationTitle("Workspaces")
         .toolbar {
-            if !viewModel.isLoadingWorkspaces {
-                ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        Task { await viewModel.refreshWorkspaces() }
-                    } label: {
-                        if viewModel.isRefreshing {
-                            ProgressView()
-                        } else {
-                            Image(systemName: "arrow.clockwise")
-                        }
-                    }
-                    .disabled(viewModel.isBusy)
-                }
-                ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        viewModel.isShowingCreatePicker = true
-                    } label: {
-                        if viewModel.isCreating {
-                            ProgressView()
-                        } else {
-                            Image(systemName: "plus")
-                        }
-                    }
-                    .disabled(viewModel.availableTypesToCreate.isEmpty || viewModel.isBusy)
-                }
-            }
             ToolbarItem(placement: .cancellationAction) {
                 Menu {
                     Text(userDisplayName)
@@ -131,15 +113,54 @@ struct WorkspaceListView: View {
         }
     }
 
+    /// Thanh nút riêng cho khu vực workspace (reload + tạo mới), tách biệt
+    /// khỏi menu tài khoản/Sign Out ở toolbar hệ thống.
+    private var sidebarActions: some View {
+        HStack(spacing: 16) {
+            Spacer()
+            Button {
+                Task { await viewModel.refreshWorkspaces() }
+            } label: {
+                if viewModel.isRefreshing {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: "arrow.clockwise")
+                }
+            }
+            .disabled(viewModel.isBusy)
+            .help("Tải lại danh sách workspace")
+
+            Button {
+                viewModel.isShowingCreatePicker = true
+            } label: {
+                if viewModel.isCreating {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: "plus")
+                }
+            }
+            .disabled(viewModel.availableTypesToCreate.isEmpty || viewModel.isBusy)
+            .help("Tạo workspace mới")
+        }
+        .buttonStyle(.borderless)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.bar)
+    }
+
     @ViewBuilder
     private var detail: some View {
         if let session = viewModel.activeSession {
+            // .id() bắt buộc — không có thì @StateObject bên trong
+            // ExpenseListView giữ nguyên theo identity view cũ khi đổi
+            // workspace, vẫn hiện danh sách của spreadsheetId trước đó.
             ExpenseListView(
                 spreadsheetId: session.spreadsheetId,
                 spreadsheetURL: session.spreadsheetURL,
                 workspaceType: session.workspaceType,
                 userDisplayName: userDisplayName
             )
+            .id(session.id)
         } else if viewModel.selectedWorkspace != nil {
             // Đã chọn workspace, openWorkspace vẫn đang chạy.
             ProgressView()

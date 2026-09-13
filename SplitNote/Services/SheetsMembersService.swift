@@ -85,7 +85,7 @@ struct SheetsMembersService {
             throw SheetsServiceError.invalidResponse
         }
 
-        // 1. Ghi header I1:K1 (gia đình) + M1:P1 (bảng cân đối).
+        // 1. Ghi header H1:J1 (gia đình) + L1:O1 (bảng cân đối).
         var headerRequest = URLRequest(url: URL(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetId)/values:batchUpdate")!)
         headerRequest.httpMethod = "POST"
         headerRequest.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
@@ -93,8 +93,8 @@ struct SheetsMembersService {
         headerRequest.httpBody = try JSONSerialization.data(withJSONObject: [
             "valueInputOption": "USER_ENTERED",
             "data": [
-                ["range": "'\(encodedTitle)'!I1:K1", "values": [SheetsLayout.familyHeaderColumns]],
-                ["range": "'\(encodedTitle)'!M1:P1", "values": [SheetsLayout.balanceHeaderColumns]]
+                ["range": "'\(tabTitle)'!H1:J1", "values": [SheetsLayout.familyHeaderColumns]],
+                ["range": "'\(tabTitle)'!L1:O1", "values": [SheetsLayout.balanceHeaderColumns]]
             ]
         ])
         let (headerData, headerResponse) = try await URLSession.shared.data(for: headerRequest)
@@ -105,7 +105,7 @@ struct SheetsMembersService {
 
         // 3. Xoá bảng cân đối cũ trước — đơn giản hơn diff xem thành viên nào
         // bị bớt — rồi ghi lại đúng số dòng theo danh sách hiện tại.
-        guard let clearURL = URL(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetId)/values/'\(encodedTitle)'!M2:P200:clear") else {
+        guard let clearURL = URL(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetId)/values/'\(encodedTitle)'!L2:O200:clear") else {
             throw SheetsServiceError.invalidResponse
         }
         var clearRequest = URLRequest(url: clearURL)
@@ -123,12 +123,12 @@ struct SheetsMembersService {
             let escapedMember = member.replacingOccurrences(of: "\"", with: "\"\"")
             return [
                 member,
-                "=SUMIF(I:I,\"\(escapedMember)\",D:D)",
-                "=SUMPRODUCT(ISNUMBER(SEARCH(\",\"&\"\(escapedMember)\"&\",\",\",\"&J2:J10000&\",\"))*IFERROR(D2:D10000/K2:K10000,0))",
-                "=N\(row)-O\(row)"
+                "=SUMIF(H:H,\"\(escapedMember)\",D:D)",
+                "=SUMPRODUCT(ISNUMBER(SEARCH(\",\"&\"\(escapedMember)\"&\",\",\",\"&I2:I10000&\",\"))*IFERROR(D2:D10000/J2:J10000,0))",
+                "=M\(row)-N\(row)"
             ]
         }
-        guard let writeURL = URL(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetId)/values/'\(encodedTitle)'!M2:P\(members.count + 1)?valueInputOption=USER_ENTERED") else {
+        guard let writeURL = URL(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetId)/values/'\(encodedTitle)'!L2:O\(members.count + 1)?valueInputOption=USER_ENTERED") else {
             throw SheetsServiceError.invalidResponse
         }
         var writeRequest = URLRequest(url: writeURL)
@@ -142,7 +142,7 @@ struct SheetsMembersService {
 
     /// Suggests (but doesn't strictly enforce — Sheets has no multi-select
     /// dropdown, so "Chi cho ai" has to stay free text anyway) `members` as
-    /// the dropdown for column I (Ai chi).
+    /// the dropdown for column H (Ai chi).
     private func applyMemberValidation(spreadsheetId: String, sheetId: Int, members: [String], accessToken: String) async throws {
         var request = URLRequest(url: URL(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetId):batchUpdate")!)
         request.httpMethod = "POST"
@@ -155,8 +155,8 @@ struct SheetsMembersService {
                         "range": [
                             "sheetId": sheetId,
                             "startRowIndex": 1,
-                            "startColumnIndex": 8,
-                            "endColumnIndex": 9
+                            "startColumnIndex": 7,
+                            "endColumnIndex": 8
                         ],
                         "rule": [
                             "condition": [

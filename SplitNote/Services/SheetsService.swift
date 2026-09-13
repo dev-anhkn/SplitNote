@@ -36,7 +36,7 @@ protocol SheetsServiceProtocol {
     /// Idempotent: creates or migrates `tabTitle` and refreshes its family columns from current members. Safe on every app launch.
     func ensureTab(spreadsheetId: String, tabTitle: String) async throws
     /// `paidBy`/`sharedWith` nil for a `.personal` workspace (columns left blank).
-    func appendRow(spreadsheetId: String, tabTitle: String, date: String, category: String, content: String, amount: String, rawNote: String, paidBy: String?, sharedWith: String?) async throws
+    func appendRow(spreadsheetId: String, tabTitle: String, date: String, category: String, content: String, amount: String, paidBy: String?, sharedWith: String?) async throws
     /// Throws `.notFound` if the spreadsheet or the tab itself doesn't exist.
     func fetchRows(spreadsheetId: String, tabTitle: String) async throws -> [ExpenseEntry]
     /// Leaves date and raw note untouched; `paidBy`/`sharedWith` nil for `.personal`.
@@ -81,8 +81,8 @@ struct SheetsService: SheetsServiceProtocol {
         try await setup.ensureTab(spreadsheetId: spreadsheetId, tabTitle: tabTitle)
     }
 
-    func appendRow(spreadsheetId: String, tabTitle: String, date: String, category: String, content: String, amount: String, rawNote: String, paidBy: String?, sharedWith: String?) async throws {
-        try await rows.appendRow(spreadsheetId: spreadsheetId, tabTitle: tabTitle, date: date, category: category, content: content, amount: amount, rawNote: rawNote, paidBy: paidBy, sharedWith: sharedWith)
+    func appendRow(spreadsheetId: String, tabTitle: String, date: String, category: String, content: String, amount: String, paidBy: String?, sharedWith: String?) async throws {
+        try await rows.appendRow(spreadsheetId: spreadsheetId, tabTitle: tabTitle, date: date, category: category, content: content, amount: amount, paidBy: paidBy, sharedWith: sharedWith)
     }
 
     func fetchRows(spreadsheetId: String, tabTitle: String) async throws -> [ExpenseEntry] {

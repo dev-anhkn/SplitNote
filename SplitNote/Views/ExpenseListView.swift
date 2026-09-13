@@ -189,6 +189,20 @@ struct ExpenseListView: View {
                 Image(systemName: "chevron.right")
             }
             .disabled(viewModel.isCurrentMonth)
+
+            // Reload thủ công — cho trường hợp có người sửa thẳng trên
+            // Google Sheet mà app chưa hay biết để tự cập nhật.
+            Button {
+                Task { await viewModel.refreshEntries() }
+            } label: {
+                if viewModel.isRefreshing {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: "arrow.clockwise")
+                }
+            }
+            .disabled(viewModel.isRefreshing)
+            .help("Tải lại danh sách khoản chi")
         }
         .padding(.horizontal)
         .padding(.vertical, 8)

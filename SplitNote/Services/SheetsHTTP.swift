@@ -14,6 +14,8 @@ enum SheetsHTTP {
             throw SheetsServiceError.invalidResponse
         }
         guard (200..<300).contains(httpResponse.statusCode) else {
+            let body = String(data: data, encoding: .utf8) ?? "<no body>"
+            print("[SplitNote][SheetsHTTP] \(httpResponse.url?.absoluteString ?? "?") -> HTTP \(httpResponse.statusCode): \(body)")
             // 404 = cả spreadsheet đã bị xoá.
             if httpResponse.statusCode == 404 {
                 throw SheetsServiceError.notFound
@@ -24,8 +26,7 @@ enum SheetsHTTP {
             if httpResponse.statusCode == 400 && isMissingRangeError(data) {
                 throw SheetsServiceError.notFound
             }
-            let message = String(data: data, encoding: .utf8) ?? "HTTP \(httpResponse.statusCode)"
-            throw SheetsServiceError.requestFailed(message)
+            throw SheetsServiceError.requestFailed(body)
         }
     }
 

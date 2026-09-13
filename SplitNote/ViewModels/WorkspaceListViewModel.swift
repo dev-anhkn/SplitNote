@@ -173,7 +173,13 @@ final class WorkspaceListViewModel: ObservableObject {
         activeSession = nil
         defer { openingWorkspaceId = nil }
 
-        let tabTitle = Self.currentMonthTabTitle()
+        await open(workspace, tabTitle: Self.currentMonthTabTitle(), allowSelfHeal: true)
+    }
+
+    /// Ensures `tabTitle` exists on `workspace` and opens it. Cache có thể
+    /// đang giữ 1 id cũ (sheet đã bị xoá/tạo lại ngoài app) — `allowSelfHeal`
+    /// cho phép tự tìm lại đúng 1 lần qua Drive trước khi báo đã xoá.
+    private func open(_ workspace: Workspace, tabTitle: String, allowSelfHeal: Bool) async {
         do {
             try await sheetsService.ensureTab(spreadsheetId: workspace.spreadsheetId, tabTitle: tabTitle)
             activeSession = ActiveSession(
@@ -182,25 +188,49 @@ final class WorkspaceListViewModel: ObservableObject {
                 spreadsheetURL: Self.editURL(spreadsheetId: workspace.spreadsheetId),
                 workspaceType: workspace.type
             )
+        } catch SheetsServiceError.notFound where allowSelfHeal {
+            await selfHealAndRetry(workspace, tabTitle: tabTitle)
         } catch SheetsServiceError.notFound {
-            // Sheet deleted outside the app — drop the dead entry.
-            store.clearSpreadsheetId(for: workspace.type, at: workspace.index)
-            reloadWorkspaces()
-            errorMessage = "\(workspace.displayName) đã bị xoá trên Drive, đã gỡ khỏi danh sách."
+            markWorkspaceMissing(workspace)
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    /// Id cached không mở được — tìm lại đúng slot này qua tag Drive (thay vì
+    /// bắt người dùng đăng xuất/đăng nhập lại để trigger reconcile) rồi mở
+    /// tiếp; chỉ báo "đã xoá" nếu tìm lại cũng không ra.
+    private func selfHealAndRetry(_ workspace: Workspace, tabTitle: String) async {
+        store.clearSpreadsheetId(for: workspace.type, at: workspace.index)
+        guard let rediscoveredId = try? await discoveryService.rediscoverWorkspace(type: workspace.type, index: workspace.index) else {
+            markWorkspaceMissing(workspace)
+            return
+        }
+        store.setSpreadsheetId(rediscoveredId, for: workspace.type, at: workspace.index)
+        reloadWorkspaces()
+        let healedWorkspace = Workspace(type: workspace.type, index: workspace.index, spreadsheetId: rediscoveredId)
+        await open(healedWorkspace, tabTitle: tabTitle, allowSelfHeal: false)
+    }
+
+    private func markWorkspaceMissing(_ workspace: Workspace) {
+        store.clearSpreadsheetId(for: workspace.type, at: workspace.index)
+        reloadWorkspaces()
+        errorMessage = "\(workspace.displayName) đã bị xoá trên Drive, đã gỡ khỏi danh sách."
     }
     
     /// Creates the next spreadsheet slot for `type` and tags it on Drive so
     /// other devices can find it later. A tagging failure doesn't block the
     /// flow — the sheet is already usable here — but is surfaced as a warning.
     func createWorkspace(_ type: WorkspaceType) async {
-        guard type.isAvailable, let index = store.nextAvailableIndex(for: type) else { return }
+        guard type.isAvailable, let index = store.nextAvailableIndex(for: type) else {
+            print("[SplitNote][createWorkspace] bỏ qua — type=\(type) isAvailable=\(type.isAvailable) index=\(String(describing: store.nextAvailableIndex(for: type)))")
+            return
+        }
+        print("[SplitNote][createWorkspace] bấm + tạo — type=\(type) index=\(index)")
         isCreating = true
         errorMessage = nil
         defer { isCreating = false }
-        
+
         let tabTitle = Self.currentMonthTabTitle()
         let displayName = "\(type.displayName) \(index + 1)"
         // Gia đình bắt đầu với đúng người tạo — thêm người khác qua màn quản
@@ -208,18 +238,21 @@ final class WorkspaceListViewModel: ObservableObject {
         let members = type == .family ? [userDisplayName] : []
         do {
             let created = try await sheetsService.createSpreadsheet(title: "SplitNote - \(displayName)", firstTabTitle: tabTitle, members: members)
+            print("[SplitNote][createWorkspace] createSpreadsheet thành công — id=\(created.spreadsheetId)")
             // Lưu local ngay để dùng được dù bước gắn thẻ bên dưới có lỗi.
             store.setSpreadsheetId(created.spreadsheetId, for: type, at: index)
             reloadWorkspaces()
             do {
                 try await driveService.tagFile(fileId: created.spreadsheetId, key: WorkspaceDiscoveryService.workspaceTypePropertyKey, value: WorkspaceDiscoveryService.tagValue(type: type, index: index))
             } catch {
+                print("[SplitNote][createWorkspace] tagFile lỗi: \(error)")
                 errorMessage = "\(displayName) đã tạo, nhưng gắn thẻ Drive thất bại nên có thể sẽ không tự tìm thấy được trên thiết bị khác: \(error.localizedDescription)"
             }
             activeSession = ActiveSession(spreadsheetId: created.spreadsheetId, tabTitle: tabTitle, spreadsheetURL: created.url, workspaceType: type)
             // Đồng bộ sidebar với session vừa mở, không chạy lại openWorkspace.
             setSelection(to: Workspace(type: type, index: index, spreadsheetId: created.spreadsheetId))
         } catch {
+            print("[SplitNote][createWorkspace] LỖI: \(error)")
             errorMessage = error.localizedDescription
         }
     }

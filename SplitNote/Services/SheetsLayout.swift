@@ -11,10 +11,13 @@ import Foundation
 enum SheetsLayout {
     /// The template every SplitNote tab starts with: the fields a parsed
     /// note maps onto, plus a running total two columns after the last one
-    /// (column G) so there's a blank spacer column (F).
-    static let headerColumns = ["Ngày", "Loại", "Nội dung", "Số tiền", "Ghi chú gốc"]
+    /// so there's a blank spacer column in between.
+    static let headerColumns = ["Ngày", "Loại", "Nội dung", "Số tiền"]
     static let totalLabel = "Tổng cộng"
     static let totalFormula = "=SUM(D2:D10000)"
+    /// Where `totalFormula` itself lives — two columns after `headerColumns`
+    /// (one blank spacer column in between).
+    static let totalColumn = SheetsHTTP.columnLetter(headerColumns.count + 2)
     static let categoryValues = ExpenseCategory.allCases.map(\.rawValue)
 
     /// Pinned as the first tab of every workspace spreadsheet. Holds one row
@@ -25,10 +28,10 @@ enum SheetsLayout {
     static let summaryHeaderColumns = ["Tháng", "Tổng cộng"] + categoryValues
 
     /// Extra columns for a `.family` workspace, right after the spacer/
-    /// "Tổng cộng" pair (F/G) so they never disturb the personal-workspace
-    /// columns A-E. Written only when `members` is non-empty.
+    /// "Tổng cộng" pair (E/F) so they never disturb the personal-workspace
+    /// columns A-D. Written only when `members` is non-empty.
     static let familyHeaderColumns = ["Ai chi", "Chi cho ai", "Số người chia"]
-    /// Per-person settle-up table, further right (M-P) than the family
+    /// Per-person settle-up table, further right (L-O) than the family
     /// input columns so the two blocks stay visually separate.
     static let balanceHeaderColumns = ["Người", "Đã chi (ứng trước)", "Phải chi (chia đều)", "Chênh lệch"]
     /// Where the family member list itself lives — a single column in
