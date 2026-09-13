@@ -18,11 +18,7 @@ enum WorkspaceType: String, CaseIterable {
         }
     }
 
-    /// Only `.personal` is wired up end-to-end for now.
     var isAvailable: Bool {
-        switch self {
-        case .personal: return true
-        case .family: return false
-        }
+        true
     }
 }
