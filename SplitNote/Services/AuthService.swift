@@ -22,7 +22,7 @@ protocol AuthServiceProtocol {
 enum AuthServiceError: Error, LocalizedError {
     case noPresentingSurface
     case missingProfile
-
+    
     var errorDescription: String? {
         switch self {
         case .noPresentingSurface:
@@ -37,16 +37,16 @@ enum AuthServiceError: Error, LocalizedError {
 /// behind an async `AuthServiceProtocol`. Presenting the sign-in screen differs
 /// by platform: iOS needs a `UIViewController`, macOS needs an `NSWindow`.
 struct GoogleAuthService: AuthServiceProtocol {
-
+    
     /// Requested in addition to the default profile scopes so the signed-in
     /// user's token can also call the Sheets API (see `SheetsService`).
     static let sheetsScope = "https://www.googleapis.com/auth/spreadsheets"
     /// Narrow Drive scope — only sees files this app creates or opens itself
     /// — used to tag/find workspace spreadsheets (see `DriveService`).
     static let driveFileScope = "https://www.googleapis.com/auth/drive.file"
-
+    
     nonisolated init() {}
-
+    
     func restorePreviousSignIn() async -> AppUser? {
         await withCheckedContinuation { continuation in
             GIDSignIn.sharedInstance.restorePreviousSignIn { user, _ in
@@ -54,22 +54,26 @@ struct GoogleAuthService: AuthServiceProtocol {
             }
         }
     }
-
+    
     func signIn() async throws -> AppUser {
+        // 1. Mở màn đăng nhập Google, xin đủ quyền Sheets + Drive.
         let googleUser = try await performSignIn()
+        // 2. Chuyển sang AppUser dùng trong app.
         guard let appUser = AppUser(googleUser: googleUser) else {
             throw AuthServiceError.missingProfile
         }
         return appUser
     }
-
+    
     func signOut() {
         GIDSignIn.sharedInstance.signOut()
     }
-
+    
     private func performSignIn() async throws -> GIDGoogleUser {
+        // 1. Tìm màn hình/cửa sổ để hiện UI đăng nhập (khác nhau giữa iOS/macOS).
+        // 2. Gọi SDK đăng nhập, xin thêm quyền Sheets + Drive.
         try await withCheckedThrowingContinuation { continuation in
-            #if os(iOS)
+#if os(iOS)
             guard let presentingViewController = Self.rootViewController else {
                 continuation.resume(throwing: AuthServiceError.noPresentingSurface)
                 return
@@ -81,7 +85,7 @@ struct GoogleAuthService: AuthServiceProtocol {
             ) { result, error in
                 Self.resume(continuation, result: result, error: error)
             }
-            #elseif os(macOS)
+#elseif os(macOS)
             guard let presentingWindow = NSApplication.shared.keyWindow ?? NSApplication.shared.windows.first else {
                 continuation.resume(throwing: AuthServiceError.noPresentingSurface)
                 return
@@ -93,10 +97,10 @@ struct GoogleAuthService: AuthServiceProtocol {
             ) { result, error in
                 Self.resume(continuation, result: result, error: error)
             }
-            #endif
+#endif
         }
     }
-
+    
     private static func resume(
         _ continuation: CheckedContinuation<GIDGoogleUser, Error>,
         result: GIDSignInResult?,
@@ -110,8 +114,8 @@ struct GoogleAuthService: AuthServiceProtocol {
             continuation.resume(throwing: AuthServiceError.missingProfile)
         }
     }
-
-    #if os(iOS)
+    
+#if os(iOS)
     private static var rootViewController: UIViewController? {
         UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
@@ -119,7 +123,7 @@ struct GoogleAuthService: AuthServiceProtocol {
             .windows.first(where: \.isKeyWindow)?
             .rootViewController
     }
-    #endif
+#endif // os(iOS)
 }
 
 private extension AppUser {

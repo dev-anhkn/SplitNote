@@ -8,7 +8,7 @@ import GoogleSignIn
 
 enum GoogleAPIAuthError: Error, LocalizedError {
     case notSignedIn
-
+    
     var errorDescription: String? {
         "You need to sign in with Google first."
     }
@@ -19,14 +19,17 @@ enum GoogleAPIAuthError: Error, LocalizedError {
 /// refreshing is a no-op if the current token still has time left.
 enum GoogleAPIAuth {
     static func currentAccessToken() async throws -> String {
+        // 1. Chưa đăng nhập thì báo lỗi luôn.
         guard let currentUser = GIDSignIn.sharedInstance.currentUser else {
             throw GoogleAPIAuthError.notSignedIn
         }
+        // 2. Làm mới token nếu cần rồi trả về token hiện tại.
         let user = try await refreshedUser(currentUser)
         return user.accessToken.tokenString
     }
-
+    
     private static func refreshedUser(_ user: GIDGoogleUser) async throws -> GIDGoogleUser {
+        // Bọc completion-handler của GoogleSignIn SDK thành async/await.
         try await withCheckedThrowingContinuation { continuation in
             user.refreshTokensIfNeeded { refreshedUser, error in
                 if let error {

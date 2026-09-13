@@ -8,86 +8,170 @@ import Foundation
 
 @MainActor
 final class WorkspaceListViewModel: ObservableObject {
-    struct Workspace: Identifiable {
+    struct Workspace: Identifiable, Hashable {
         let type: WorkspaceType
+        /// 0-based slot within `type` (up to `WorkspaceStore.maxInstancesPerType`).
+        let index: Int
         let spreadsheetId: String
-        var id: WorkspaceType { type }
+        var id: String { "\(type.rawValue)-\(index)" }
+        var displayName: String { "\(type.displayName) \(index + 1)" }
+        
+        // Bằng `id` là đủ để so sánh/hash — không cần `WorkspaceType` phải
+        // Hashable, tránh phải sửa thêm file Model chỉ vì màn sidebar cần
+        // `selection:` là Hashable.
+        static func == (lhs: Workspace, rhs: Workspace) -> Bool {
+            lhs.id == rhs.id
+        }
+        
+        func hash(into hasher: inout Hasher) {
+            hasher.combine(id)
+        }
     }
-
-    /// Handed to `SheetSessionView` once a workspace's current-month tab is
+    
+    /// Handed to `ExpenseListView` once a workspace's current-month tab is
     /// confirmed ready (created or already existing).
     struct ActiveSession: Identifiable, Hashable {
         let spreadsheetId: String
         let tabTitle: String
         let spreadsheetURL: URL?
+        let workspaceType: WorkspaceType
         var id: String { spreadsheetId + tabTitle }
+
+        static func == (lhs: ActiveSession, rhs: ActiveSession) -> Bool {
+            lhs.id == rhs.id
+        }
+
+        func hash(into hasher: inout Hasher) {
+            hasher.combine(id)
+        }
     }
-
-    /// The Drive `appProperties` key tagging a workspace's spreadsheet — lets
-    /// the app find it again via `DriveService` if the local cache
-    /// (`WorkspaceStore`) is ever lost (reinstall, new device).
-    private static let workspaceTypePropertyKey = "splitnote_workspace_type"
-
+    
     @Published private(set) var workspaces: [Workspace] = []
     @Published var isShowingCreatePicker = false
-    @Published private(set) var preparingType: WorkspaceType?
+    @Published private(set) var openingWorkspaceId: String?
+    @Published private(set) var isCreating = false
+    @Published private(set) var deletingWorkspaceId: String?
     @Published var errorMessage: String?
-    @Published var activeSession: ActiveSession?
+    @Published private(set) var activeSession: ActiveSession?
+    /// Single source of truth for sidebar selection — bound directly to
+    /// `List(selection:)`. Setting it opens that workspace; setting it to nil
+    /// clears `activeSession`. Kept in the view model (not view @State) so
+    /// programmatic selection (e.g. right after `createWorkspace`) can't
+    /// desync from what the sidebar highlights.
+    @Published var selectedWorkspace: Workspace? {
+        didSet {
+            guard selectedWorkspace != oldValue, !isApplyingProgrammaticSelection else { return }
+            Task { await applySelection(selectedWorkspace) }
+        }
+    }
+    private var isApplyingProgrammaticSelection = false
     /// True until the initial Drive reconcile finishes — the "+" button only
     /// appears after that, so it can never race a not-yet-discovered sheet
     /// into creating a duplicate.
     @Published private(set) var isLoadingWorkspaces = true
-
+    /// Manual refresh (separate from `isLoadingWorkspaces`, which is only
+    /// for the very first load) — re-checks that cached sheets still exist
+    /// and looks for anything newly available.
+    @Published private(set) var isRefreshing = false
+    
     private let sheetsService: SheetsServiceProtocol
     private let driveService: DriveServiceProtocol
     private let store: WorkspaceStore
+    private let discoveryService: WorkspaceDiscoveryService
+    /// Seeds the member list of a `.family` workspace with its creator's name
+    /// (there's no cross-account invite yet — see `WorkspaceStore.members`).
+    private let userDisplayName: String
 
     init(
+        userDisplayName: String,
         sheetsService: SheetsServiceProtocol = SheetsService(),
         driveService: DriveServiceProtocol = DriveService(),
         store: WorkspaceStore = WorkspaceStore()
     ) {
+        self.userDisplayName = userDisplayName
         self.sheetsService = sheetsService
         self.driveService = driveService
         self.store = store
+        self.discoveryService = WorkspaceDiscoveryService(driveService: driveService, store: store)
         reloadWorkspaces()
     }
-
+    
+    var isBusy: Bool {
+        isCreating || isRefreshing || openingWorkspaceId != nil || deletingWorkspaceId != nil
+    }
+    
     var availableTypesToCreate: [WorkspaceType] {
-        WorkspaceType.allCases.filter { $0.isAvailable && store.spreadsheetId(for: $0) == nil }
+        WorkspaceType.allCases.filter { $0.isAvailable && store.nextAvailableIndex(for: $0) != nil }
     }
-
+    
     func reloadWorkspaces() {
-        workspaces = WorkspaceType.allCases.compactMap { type in
-            store.spreadsheetId(for: type).map { Workspace(type: type, spreadsheetId: $0) }
+        var result: [Workspace] = []
+        for type in WorkspaceType.allCases {
+            for index in 0..<WorkspaceStore.maxInstancesPerType {
+                if let id = store.spreadsheetId(for: type, at: index) {
+                    result.append(Workspace(type: type, index: index, spreadsheetId: id))
+                }
+            }
         }
+        workspaces = result
     }
-
-    /// For any available workspace type missing from the local cache, asks
-    /// Drive whether a previously-created (and tagged) spreadsheet already
-    /// exists for it — recovering from a lost cache instead of letting the
-    /// user create a duplicate. Safe to call every time the list appears.
+    
+    /// Runs once on first appearance: drops workspaces deleted on Drive, then
+    /// recovers any tagged spreadsheet from another device the cache missed.
     func reconcileMissingWorkspaces() async {
         defer { isLoadingWorkspaces = false }
+        await runDiscoveryReconcile()
+    }
 
-        let missingTypes = WorkspaceType.allCases.filter { $0.isAvailable && store.spreadsheetId(for: $0) == nil }
-        guard !missingTypes.isEmpty else { return }
+    /// Manual refresh — same as `reconcileMissingWorkspaces`, for a pull/tap.
+    func refreshWorkspaces() async {
+        isRefreshing = true
+        errorMessage = nil
+        defer { isRefreshing = false }
 
-        for type in missingTypes {
-            guard let foundId = try? await driveService.findFile(key: Self.workspaceTypePropertyKey, value: type.rawValue) else {
-                continue
-            }
-            store.setSpreadsheetId(foundId, for: type)
+        await runDiscoveryReconcile()
+    }
+
+    private func runDiscoveryReconcile() async {
+        // 1. Bỏ workspace đã bị xoá trên Drive.
+        await discoveryService.pruneDeletedWorkspaces()
+        // 2. Tìm bù workspace được tag trên Drive mà cache local chưa biết.
+        if let discoveryError = await discoveryService.discoverMissingWorkspaces() {
+            errorMessage = discoveryError
         }
         reloadWorkspaces()
+    }
+
+    /// Reacts to `selectedWorkspace` changing: opens the newly selected
+    /// workspace, or clears the active session when selection is cleared.
+    private func applySelection(_ workspace: Workspace?) async {
+        guard let workspace else {
+            activeSession = nil
+            return
+        }
+        await openWorkspace(workspace)
+        if activeSession == nil {
+            selectedWorkspace = nil
+        }
+    }
+
+    /// Sets `selectedWorkspace` to reflect a session already opened elsewhere
+    /// (e.g. right after `createWorkspace`) without re-running `openWorkspace`.
+    private func setSelection(to workspace: Workspace?) {
+        isApplyingProgrammaticSelection = true
+        selectedWorkspace = workspace
+        isApplyingProgrammaticSelection = false
     }
 
     /// Opens an already-created workspace: makes sure this month's tab
-    /// exists, then hands off to the session view.
-    func openWorkspace(_ workspace: Workspace) async {
-        preparingType = workspace.type
+    /// exists, then hands off to its expense list.
+    private func openWorkspace(_ workspace: Workspace) async {
+        openingWorkspaceId = workspace.id
         errorMessage = nil
-        defer { preparingType = nil }
+        // Xoá session cũ ngay: nếu mở thất bại, detail pane không được phép
+        // giữ dữ liệu của workspace trước trong khi sidebar đã chọn mục mới.
+        activeSession = nil
+        defer { openingWorkspaceId = nil }
 
         let tabTitle = Self.currentMonthTabTitle()
         do {
@@ -95,46 +179,77 @@ final class WorkspaceListViewModel: ObservableObject {
             activeSession = ActiveSession(
                 spreadsheetId: workspace.spreadsheetId,
                 tabTitle: tabTitle,
-                spreadsheetURL: Self.editURL(spreadsheetId: workspace.spreadsheetId)
+                spreadsheetURL: Self.editURL(spreadsheetId: workspace.spreadsheetId),
+                workspaceType: workspace.type
             )
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    /// Creates the one spreadsheet for a not-yet-created workspace type, and
-    /// tags it on Drive so it can be found again later even if the local
-    /// cache is lost. Tagging failure doesn't block the flow — the sheet is
-    /// already usable, only future auto-recovery would be affected.
-    func createWorkspace(_ type: WorkspaceType) async {
-        guard type.isAvailable, store.spreadsheetId(for: type) == nil else { return }
-        preparingType = type
-        errorMessage = nil
-        defer { preparingType = nil }
-
-        let tabTitle = Self.currentMonthTabTitle()
-        do {
-            let title = "SplitNote - \(type.displayName)"
-            let created = try await sheetsService.createSpreadsheet(title: title, firstTabTitle: tabTitle)
-            store.setSpreadsheetId(created.spreadsheetId, for: type)
+        } catch SheetsServiceError.notFound {
+            // Sheet deleted outside the app — drop the dead entry.
+            store.clearSpreadsheetId(for: workspace.type, at: workspace.index)
             reloadWorkspaces()
-            try? await driveService.tagFile(fileId: created.spreadsheetId, key: Self.workspaceTypePropertyKey, value: type.rawValue)
-            activeSession = ActiveSession(spreadsheetId: created.spreadsheetId, tabTitle: tabTitle, spreadsheetURL: created.url)
+            errorMessage = "\(workspace.displayName) đã bị xoá trên Drive, đã gỡ khỏi danh sách."
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+    
+    /// Creates the next spreadsheet slot for `type` and tags it on Drive so
+    /// other devices can find it later. A tagging failure doesn't block the
+    /// flow — the sheet is already usable here — but is surfaced as a warning.
+    func createWorkspace(_ type: WorkspaceType) async {
+        guard type.isAvailable, let index = store.nextAvailableIndex(for: type) else { return }
+        isCreating = true
+        errorMessage = nil
+        defer { isCreating = false }
+        
+        let tabTitle = Self.currentMonthTabTitle()
+        let displayName = "\(type.displayName) \(index + 1)"
+        // Gia đình bắt đầu với đúng người tạo — thêm người khác qua màn quản
+        // lý thành viên sau (chưa có invite qua tài khoản Google thật).
+        let members = type == .family ? [userDisplayName] : []
+        do {
+            let created = try await sheetsService.createSpreadsheet(title: "SplitNote - \(displayName)", firstTabTitle: tabTitle, members: members)
+            // Lưu local ngay để dùng được dù bước gắn thẻ bên dưới có lỗi.
+            store.setSpreadsheetId(created.spreadsheetId, for: type, at: index)
+            reloadWorkspaces()
+            do {
+                try await driveService.tagFile(fileId: created.spreadsheetId, key: WorkspaceDiscoveryService.workspaceTypePropertyKey, value: WorkspaceDiscoveryService.tagValue(type: type, index: index))
+            } catch {
+                errorMessage = "\(displayName) đã tạo, nhưng gắn thẻ Drive thất bại nên có thể sẽ không tự tìm thấy được trên thiết bị khác: \(error.localizedDescription)"
+            }
+            activeSession = ActiveSession(spreadsheetId: created.spreadsheetId, tabTitle: tabTitle, spreadsheetURL: created.url, workspaceType: type)
+            // Đồng bộ sidebar với session vừa mở, không chạy lại openWorkspace.
+            setSelection(to: Workspace(type: type, index: index, spreadsheetId: created.spreadsheetId))
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 
+    /// Trashes the spreadsheet on Drive, then drops it locally (propagates to
+    /// other devices on their next prune, since a trashed file reads as deleted).
+    func deleteWorkspace(_ workspace: Workspace) async {
+        deletingWorkspaceId = workspace.id
+        errorMessage = nil
+        defer { deletingWorkspaceId = nil }
+
+        do {
+            try await driveService.trashFile(fileId: workspace.spreadsheetId)
+            store.clearSpreadsheetId(for: workspace.type, at: workspace.index)
+            reloadWorkspaces()
+            // Selection nil chỉ xoá activeSession, không gọi lại network — đi
+            // qua đường bình thường (không suppress) để activeSession được dọn.
+            if selectedWorkspace == workspace {
+                selectedWorkspace = nil
+            }
+        } catch {
+            errorMessage = "Không thể xoá \(workspace.displayName): \(error.localizedDescription)"
+        }
+    }
+    
     private static func editURL(spreadsheetId: String) -> URL? {
         URL(string: "https://docs.google.com/spreadsheets/d/\(spreadsheetId)/edit")
     }
-
-    /// "-" instead of "/" so this can drop straight into an A1 range
-    /// (`'Tháng 09-2026'!A1:D1`) without URL-encoding a path separator.
-    static func currentMonthTabTitle(date: Date = Date()) -> String {
-        let components = Calendar.current.dateComponents([.month, .year], from: date)
-        let month = components.month ?? 1
-        let year = components.year ?? 0
-        return String(format: "Tháng %02d-%d", month, year)
+    
+    static func currentMonthTabTitle(date: Date = AppClock.now) -> String {
+        MonthTabTitle.title(for: date)
     }
 }
