@@ -324,7 +324,7 @@ struct SheetsSpreadsheetSetupService {
         let (data, response) = try await URLSession.shared.data(for: request)
         try SheetsHTTP.validate(response, data: data)
 
-        guard
+        guard   
             let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
             let replies = json["replies"] as? [[String: Any]],
             let duplicateSheet = replies.first?["duplicateSheet"] as? [String: Any],

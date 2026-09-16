@@ -39,6 +39,11 @@ enum SheetsLayout {
     /// category totals so it never collides with `summaryHeaderColumns`.
     static let membersColumn = SheetsHTTP.columnLetter(summaryHeaderColumns.count + 2)
     static let membersHeaderLabel = "Thành viên"
+    /// The Google account (if any) granted Drive access for each member —
+    /// same row order as `membersColumn`, right next to it. Separate from the
+    /// member's display name so renaming them never touches who has access.
+    static let memberEmailsColumn = SheetsHTTP.columnLetter(summaryHeaderColumns.count + 3)
+    static let memberEmailsHeaderLabel = "Email"
 
     /// Hidden tab kept purely as the source for `duplicateSheet` — every
     /// month tab (including the very first one) is a copy of this, so

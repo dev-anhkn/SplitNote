@@ -40,7 +40,7 @@ final class QuickAddExpenseViewModel: ObservableObject {
     let tabTitle: String
     /// Every member of this workspace — empty for `.personal`, which hides
     /// the "Ai chi"/"Chi cho ai" fields entirely.
-    let members: [String]
+    let memberEntries: [FamilyMember]
     private let spreadsheetId: String
     private let sheetsService: SheetsServiceProtocol
     /// Non-nil when editing an existing row (updates it in place) instead of
@@ -51,25 +51,27 @@ final class QuickAddExpenseViewModel: ObservableObject {
     /// category field doesn't silently overwrite it with "Khác" on save.
     private let unmappedOriginalCategory: String?
 
-    var isFamily: Bool { !members.isEmpty }
+    /// Display names — what the "Ai chi" picker and `MemberShareField` show.
+    var members: [String] { memberEntries.map(\.name) }
+    var isFamily: Bool { !memberEntries.isEmpty }
 
-    init(spreadsheetId: String, tabTitle: String, members: [String] = [], currentUserName: String = "", sheetsService: SheetsServiceProtocol = SheetsService()) {
+    init(spreadsheetId: String, tabTitle: String, memberEntries: [FamilyMember] = [], currentUserName: String = "", currentUserEmail: String = "", sheetsService: SheetsServiceProtocol = SheetsService()) {
         self.spreadsheetId = spreadsheetId
         self.tabTitle = tabTitle
-        self.members = members
+        self.memberEntries = memberEntries
         self.sheetsService = sheetsService
         self.editingRowIndex = nil
         self.unmappedOriginalCategory = nil
-        self.paidBy = members.contains(currentUserName) ? currentUserName : (members.first ?? "")
-        self.selectedSharers = Set(members)
+        self.paidBy = Self.defaultPaidBy(memberEntries: memberEntries, currentUserName: currentUserName, currentUserEmail: currentUserEmail)
+        self.selectedSharers = Set(memberEntries.map(\.name))
     }
 
     /// Pre-fills the form from an existing row; `submitEntry()` then updates
     /// that row in place rather than appending a new one.
-    init(spreadsheetId: String, tabTitle: String, editing entry: ExpenseEntry, members: [String] = [], currentUserName: String = "", sheetsService: SheetsServiceProtocol = SheetsService()) {
+    init(spreadsheetId: String, tabTitle: String, editing entry: ExpenseEntry, memberEntries: [FamilyMember] = [], currentUserName: String = "", currentUserEmail: String = "", sheetsService: SheetsServiceProtocol = SheetsService()) {
         self.spreadsheetId = spreadsheetId
         self.tabTitle = tabTitle
-        self.members = members
+        self.memberEntries = memberEntries
         self.sheetsService = sheetsService
         self.editingRowIndex = entry.rowIndex
         self.content = entry.content
@@ -79,14 +81,27 @@ final class QuickAddExpenseViewModel: ObservableObject {
         // Format số tiền ngay từ đầu, không qua `didSet` (tránh nhấp nháy khi mở màn).
         let digits = NSDecimalNumber(decimal: entry.amount).stringValue.filter(\.isNumber)
         self.amountText = Self.groupedAmountText(fromDigits: digits)
-        self.paidBy = entry.paidBy.isEmpty ? currentUserName : entry.paidBy
+        self.paidBy = entry.paidBy.isEmpty ? Self.defaultPaidBy(memberEntries: memberEntries, currentUserName: currentUserName, currentUserEmail: currentUserEmail) : entry.paidBy
         let sharedNames = entry.sharedWith
             .split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
         // Hàng cũ chưa từng có dữ liệu gia đình (trước khi có tính năng này)
         // thì coi như chia cho tất cả, thay vì để trống.
-        self.selectedSharers = sharedNames.isEmpty ? Set(members) : Set(sharedNames)
+        self.selectedSharers = sharedNames.isEmpty ? Set(memberEntries.map(\.name)) : Set(sharedNames)
+    }
+
+    /// Ưu tiên khớp theo email tài khoản đang đăng nhập với email đã gắn cho
+    /// từng thành viên (`FamilyMember.email`) — đúng cho cả người tạo lẫn
+    /// người được mời, không phụ thuộc tên hiển thị Google có trùng tên
+    /// thành viên trong sheet hay không. Không khớp được thì mới rơi về so
+    /// tên hiển thị (tương thích các workspace cũ chưa có email gắn theo).
+    private static func defaultPaidBy(memberEntries: [FamilyMember], currentUserName: String, currentUserEmail: String) -> String {
+        if !currentUserEmail.isEmpty, let matched = memberEntries.first(where: { $0.email?.caseInsensitiveCompare(currentUserEmail) == .orderedSame }) {
+            return matched.name
+        }
+        let names = memberEntries.map(\.name)
+        return names.contains(currentUserName) ? currentUserName : (names.first ?? "")
     }
 
     var canSubmit: Bool {

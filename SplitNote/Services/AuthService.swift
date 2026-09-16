@@ -44,6 +44,11 @@ struct GoogleAuthService: AuthServiceProtocol {
     /// Narrow Drive scope — only sees files this app creates or opens itself
     /// — used to tag/find workspace spreadsheets (see `DriveService`).
     static let driveFileScope = "https://www.googleapis.com/auth/drive.file"
+    /// Read-only metadata across ALL files the account can access (owned +
+    /// shared), unlike `driveFileScope`. Needed so `WorkspaceDiscoveryService`
+    /// can find a workspace shared with this account via `appProperties`,
+    /// even though this account's own `drive.file` grant never touched it.
+    static let driveMetadataReadonlyScope = "https://www.googleapis.com/auth/drive.metadata.readonly"
     
     nonisolated init() {}
     
@@ -81,7 +86,7 @@ struct GoogleAuthService: AuthServiceProtocol {
             GIDSignIn.sharedInstance.signIn(
                 withPresenting: presentingViewController,
                 hint: nil,
-                additionalScopes: [Self.sheetsScope, Self.driveFileScope]
+                additionalScopes: [Self.sheetsScope, Self.driveFileScope, Self.driveMetadataReadonlyScope]
             ) { result, error in
                 Self.resume(continuation, result: result, error: error)
             }
@@ -93,7 +98,7 @@ struct GoogleAuthService: AuthServiceProtocol {
             GIDSignIn.sharedInstance.signIn(
                 withPresenting: presentingWindow,
                 hint: nil,
-                additionalScopes: [Self.sheetsScope, Self.driveFileScope]
+                additionalScopes: [Self.sheetsScope, Self.driveFileScope, Self.driveMetadataReadonlyScope]
             ) { result, error in
                 Self.resume(continuation, result: result, error: error)
             }

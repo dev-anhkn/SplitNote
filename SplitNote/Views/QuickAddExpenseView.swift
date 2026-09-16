@@ -13,17 +13,17 @@ struct QuickAddExpenseView: View {
     private let screenTitle: String
     private let onSaved: () -> Void
 
-    init(spreadsheetId: String, tabTitle: String, members: [String] = [], currentUserName: String = "", onSaved: @escaping () -> Void) {
+    init(spreadsheetId: String, tabTitle: String, memberEntries: [FamilyMember] = [], currentUserName: String = "", currentUserEmail: String = "", onSaved: @escaping () -> Void) {
         self.screenTitle = "Thêm khoản chi"
         self.onSaved = onSaved
-        _viewModel = StateObject(wrappedValue: QuickAddExpenseViewModel(spreadsheetId: spreadsheetId, tabTitle: tabTitle, members: members, currentUserName: currentUserName))
+        _viewModel = StateObject(wrappedValue: QuickAddExpenseViewModel(spreadsheetId: spreadsheetId, tabTitle: tabTitle, memberEntries: memberEntries, currentUserName: currentUserName, currentUserEmail: currentUserEmail))
     }
 
     /// Edits an existing row in place instead of appending a new one.
-    init(spreadsheetId: String, tabTitle: String, editing entry: ExpenseEntry, members: [String] = [], currentUserName: String = "", onSaved: @escaping () -> Void) {
+    init(spreadsheetId: String, tabTitle: String, editing entry: ExpenseEntry, memberEntries: [FamilyMember] = [], currentUserName: String = "", currentUserEmail: String = "", onSaved: @escaping () -> Void) {
         self.screenTitle = "Sửa khoản chi"
         self.onSaved = onSaved
-        _viewModel = StateObject(wrappedValue: QuickAddExpenseViewModel(spreadsheetId: spreadsheetId, tabTitle: tabTitle, editing: entry, members: members, currentUserName: currentUserName))
+        _viewModel = StateObject(wrappedValue: QuickAddExpenseViewModel(spreadsheetId: spreadsheetId, tabTitle: tabTitle, editing: entry, memberEntries: memberEntries, currentUserName: currentUserName, currentUserEmail: currentUserEmail))
     }
 
     var body: some View {

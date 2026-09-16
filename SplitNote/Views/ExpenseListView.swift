@@ -17,11 +17,13 @@ struct ExpenseListView: View {
     private let spreadsheetId: String
     private let spreadsheetURL: URL?
     private let userDisplayName: String
+    private let userEmail: String
 
-    init(spreadsheetId: String, spreadsheetURL: URL?, workspaceType: WorkspaceType, userDisplayName: String) {
+    init(spreadsheetId: String, spreadsheetURL: URL?, workspaceType: WorkspaceType, userDisplayName: String, userEmail: String) {
         self.spreadsheetId = spreadsheetId
         self.spreadsheetURL = spreadsheetURL
         self.userDisplayName = userDisplayName
+        self.userEmail = userEmail
         _viewModel = StateObject(wrappedValue: ExpenseListViewModel(spreadsheetId: spreadsheetId, workspaceType: workspaceType))
     }
 
@@ -74,14 +76,14 @@ struct ExpenseListView: View {
         }
         .sheet(isPresented: $viewModel.isShowingQuickAdd) {
             NavigationStack {
-                QuickAddExpenseView(spreadsheetId: spreadsheetId, tabTitle: viewModel.tabTitle, members: viewModel.familyMembers.members, currentUserName: userDisplayName) {
+                QuickAddExpenseView(spreadsheetId: spreadsheetId, tabTitle: viewModel.tabTitle, memberEntries: viewModel.familyMembers.memberEntries, currentUserName: userDisplayName, currentUserEmail: userEmail) {
                     Task { await viewModel.loadEntries() }
                 }
             }
         }
         .sheet(item: $editingEntry) { entry in
             NavigationStack {
-                QuickAddExpenseView(spreadsheetId: spreadsheetId, tabTitle: viewModel.tabTitle, editing: entry, members: viewModel.familyMembers.members, currentUserName: userDisplayName) {
+                QuickAddExpenseView(spreadsheetId: spreadsheetId, tabTitle: viewModel.tabTitle, editing: entry, memberEntries: viewModel.familyMembers.memberEntries, currentUserName: userDisplayName, currentUserEmail: userEmail) {
                     Task { await viewModel.loadEntries() }
                 }
             }
@@ -292,6 +294,6 @@ private struct ExpenseRowView: View {
 
 #Preview {
     NavigationStack {
-        ExpenseListView(spreadsheetId: "preview", spreadsheetURL: nil, workspaceType: .personal, userDisplayName: "Preview User")
+        ExpenseListView(spreadsheetId: "preview", spreadsheetURL: nil, workspaceType: .personal, userDisplayName: "Preview User", userEmail: "preview@example.com")
     }
 }

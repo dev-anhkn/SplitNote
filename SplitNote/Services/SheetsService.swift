@@ -51,6 +51,9 @@ protocol SheetsServiceProtocol {
     func fetchMembers(spreadsheetId: String) async throws -> [String]
     /// Callers must call `ensureTab` afterwards to refresh the currently open tab's family block.
     func setMembers(spreadsheetId: String, members: [String]) async throws
+    /// The Google account (if any) granted Drive access for each member, same row order as `fetchMembers`.
+    func fetchMemberEmails(spreadsheetId: String) async throws -> [String]
+    func setMemberEmails(spreadsheetId: String, emails: [String]) async throws
 }
 
 /// Talks to the Google Sheets API using the access token of the currently
@@ -111,5 +114,13 @@ struct SheetsService: SheetsServiceProtocol {
 
     func setMembers(spreadsheetId: String, members: [String]) async throws {
         try await self.members.setMembers(spreadsheetId: spreadsheetId, members: members)
+    }
+
+    func fetchMemberEmails(spreadsheetId: String) async throws -> [String] {
+        try await members.fetchMemberEmails(spreadsheetId: spreadsheetId)
+    }
+
+    func setMemberEmails(spreadsheetId: String, emails: [String]) async throws {
+        try await members.setMemberEmails(spreadsheetId: spreadsheetId, emails: emails)
     }
 }

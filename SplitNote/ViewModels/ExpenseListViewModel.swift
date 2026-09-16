@@ -96,22 +96,25 @@ final class ExpenseListViewModel: ObservableObject {
             hasLoadedOnce = true
         }
 
-        // 2. Đọc các khoản chi + (nếu là gia đình) danh sách thành viên từ
-        // sheet song song — thành viên đọc thẳng từ "Tổng hợp", không cache
-        // cục bộ, nên đổi trên thiết bị nào cũng thấy ngay ở đây.
+        // 2. Đọc các khoản chi + (nếu là gia đình) danh sách thành viên + email
+        // gắn theo từng người từ sheet song song — đọc thẳng từ "Tổng hợp",
+        // không cache cục bộ, nên đổi trên thiết bị nào cũng thấy ngay ở đây.
         async let membersTask: [String] = isFamily ? ((try? await sheetsService.fetchMembers(spreadsheetId: spreadsheetId)) ?? []) : []
+        async let memberEmailsTask: [String] = isFamily ? ((try? await sheetsService.fetchMemberEmails(spreadsheetId: spreadsheetId)) ?? []) : []
         do {
             let rows = try await sheetsService.fetchRows(spreadsheetId: spreadsheetId, tabTitle: tabTitle)
             guard generation == loadGeneration else { return }
             entries = rows
             sheetMissing = false
-            familyMembers.setMembers(await membersTask)
+            let (names, emails) = await (membersTask, memberEmailsTask)
+            familyMembers.setMembers(names, emails: emails)
         } catch SheetsServiceError.notFound {
             guard generation == loadGeneration else { return }
             // 3. Không tìm thấy tab/sheet thì chuyển sang trạng thái "cần tạo".
             entries = []
             sheetMissing = true
-            familyMembers.setMembers(await membersTask)
+            let (names, emails) = await (membersTask, memberEmailsTask)
+            familyMembers.setMembers(names, emails: emails)
         } catch {
             guard generation == loadGeneration else { return }
             errorMessage = error.localizedDescription

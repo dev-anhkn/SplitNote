@@ -11,7 +11,7 @@ struct LoginView: View {
     var body: some View {
         Group {
             if let user = viewModel.currentUser {
-                WorkspaceListView(userDisplayName: user.displayName, onSignOut: viewModel.signOut)
+                WorkspaceListView(userDisplayName: user.displayName, userEmail: user.email, onSignOut: viewModel.signOut)
             } else {
                 signInPrompt
             }

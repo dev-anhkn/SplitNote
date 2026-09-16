@@ -22,13 +22,47 @@ struct SheetsMembersService {
         try await setMembers(spreadsheetId: spreadsheetId, members: members, accessToken: accessToken)
     }
 
+    /// Parallel to `fetchMembers` — same row order, "" where a member has no linked email.
+    func fetchMemberEmails(spreadsheetId: String) async throws -> [String] {
+        let accessToken = try await GoogleAPIAuth.currentAccessToken()
+        return try await fetchMemberEmails(spreadsheetId: spreadsheetId, accessToken: accessToken)
+    }
+
+    /// Callers must call `ensureTab` afterwards to refresh the currently open tab's family block.
+    func setMemberEmails(spreadsheetId: String, emails: [String]) async throws {
+        let accessToken = try await GoogleAPIAuth.currentAccessToken()
+        try await setMemberEmails(spreadsheetId: spreadsheetId, emails: emails, accessToken: accessToken)
+    }
+
     /// Reads the member list from its column in "Tổng hợp". `.notFound` means
     /// that tab doesn't exist yet on this spreadsheet (predates the feature)
     /// — same as "no members" rather than an error.
     func fetchMembers(spreadsheetId: String, accessToken: String) async throws -> [String] {
+        try await fetchColumn(spreadsheetId: spreadsheetId, column: SheetsLayout.membersColumn, accessToken: accessToken)
+            .compactMap { $0 }
+            .filter { !$0.isEmpty }
+    }
+
+    func fetchMemberEmails(spreadsheetId: String, accessToken: String) async throws -> [String] {
+        try await fetchColumn(spreadsheetId: spreadsheetId, column: SheetsLayout.memberEmailsColumn, accessToken: accessToken)
+            .map { $0 ?? "" }
+    }
+
+    /// Rewrites the member list wholesale — simpler than diffing who was
+    /// added/removed.
+    func setMembers(spreadsheetId: String, members: [String], accessToken: String) async throws {
+        try await replaceColumn(spreadsheetId: spreadsheetId, column: SheetsLayout.membersColumn, headerLabel: SheetsLayout.membersHeaderLabel, values: members, accessToken: accessToken)
+    }
+
+    func setMemberEmails(spreadsheetId: String, emails: [String], accessToken: String) async throws {
+        try await replaceColumn(spreadsheetId: spreadsheetId, column: SheetsLayout.memberEmailsColumn, headerLabel: SheetsLayout.memberEmailsHeaderLabel, values: emails, accessToken: accessToken)
+    }
+
+    /// Reads one "Tổng hợp" column, row-aligned (a `nil` entry means that row's cell is blank).
+    private func fetchColumn(spreadsheetId: String, column: String, accessToken: String) async throws -> [String?] {
         guard
             let encodedTitle = SheetsHTTP.percentEncodedTabTitle(SheetsLayout.summaryTabTitle),
-            let url = URL(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetId)/values/'\(encodedTitle)'!\(SheetsLayout.membersColumn)2:\(SheetsLayout.membersColumn)200")
+            let url = URL(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetId)/values/'\(encodedTitle)'!\(column)2:\(column)200")
         else {
             throw SheetsServiceError.invalidResponse
         }
@@ -44,16 +78,16 @@ struct SheetsMembersService {
             throw SheetsServiceError.invalidResponse
         }
         let rows = json["values"] as? [[String]] ?? []
-        return rows.compactMap(\.first).filter { !$0.isEmpty }
+        return rows.map(\.first)
     }
 
-    /// Rewrites the member list wholesale — simpler than diffing who was
-    /// added/removed.
-    func setMembers(spreadsheetId: String, members: [String], accessToken: String) async throws {
+    /// Clears then rewrites one "Tổng hợp" column wholesale — shared by
+    /// `setMembers`/`setMemberEmails`, simpler than diffing what changed.
+    private func replaceColumn(spreadsheetId: String, column: String, headerLabel: String, values: [String], accessToken: String) async throws {
         guard let encodedTitle = SheetsHTTP.percentEncodedTabTitle(SheetsLayout.summaryTabTitle) else {
             throw SheetsServiceError.invalidResponse
         }
-        guard let clearURL = URL(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetId)/values/'\(encodedTitle)'!\(SheetsLayout.membersColumn)1:\(SheetsLayout.membersColumn)200:clear") else {
+        guard let clearURL = URL(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetId)/values/'\(encodedTitle)'!\(column)1:\(column)200:clear") else {
             throw SheetsServiceError.invalidResponse
         }
         var clearRequest = URLRequest(url: clearURL)
@@ -64,15 +98,15 @@ struct SheetsMembersService {
         let (clearData, clearResponse) = try await URLSession.shared.data(for: clearRequest)
         try SheetsHTTP.validate(clearResponse, data: clearData)
 
-        guard !members.isEmpty else { return }
-        guard let writeURL = URL(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetId)/values/'\(encodedTitle)'!\(SheetsLayout.membersColumn)1:\(SheetsLayout.membersColumn)\(members.count + 1)?valueInputOption=USER_ENTERED") else {
+        guard !values.isEmpty else { return }
+        guard let writeURL = URL(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetId)/values/'\(encodedTitle)'!\(column)1:\(column)\(values.count + 1)?valueInputOption=USER_ENTERED") else {
             throw SheetsServiceError.invalidResponse
         }
         var writeRequest = URLRequest(url: writeURL)
         writeRequest.httpMethod = "PUT"
         writeRequest.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         writeRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        writeRequest.httpBody = try JSONSerialization.data(withJSONObject: ["values": ([SheetsLayout.membersHeaderLabel] + members).map { [$0] }])
+        writeRequest.httpBody = try JSONSerialization.data(withJSONObject: ["values": ([headerLabel] + values).map { [$0] }])
         let (writeData, writeResponse) = try await URLSession.shared.data(for: writeRequest)
         try SheetsHTTP.validate(writeResponse, data: writeData)
     }

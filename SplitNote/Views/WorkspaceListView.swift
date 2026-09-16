@@ -12,10 +12,12 @@ struct WorkspaceListView: View {
     @StateObject private var viewModel: WorkspaceListViewModel
     @State private var workspacePendingDeletion: WorkspaceListViewModel.Workspace?
     let userDisplayName: String
+    let userEmail: String
     let onSignOut: () -> Void
 
-    init(userDisplayName: String, onSignOut: @escaping () -> Void) {
+    init(userDisplayName: String, userEmail: String, onSignOut: @escaping () -> Void) {
         self.userDisplayName = userDisplayName
+        self.userEmail = userEmail
         self.onSignOut = onSignOut
         _viewModel = StateObject(wrappedValue: WorkspaceListViewModel(userDisplayName: userDisplayName))
     }
@@ -158,7 +160,8 @@ struct WorkspaceListView: View {
                 spreadsheetId: session.spreadsheetId,
                 spreadsheetURL: session.spreadsheetURL,
                 workspaceType: session.workspaceType,
-                userDisplayName: userDisplayName
+                userDisplayName: userDisplayName,
+                userEmail: userEmail
             )
             .id(session.id)
         } else if viewModel.selectedWorkspace != nil {
@@ -171,5 +174,5 @@ struct WorkspaceListView: View {
 }
 
 #Preview {
-    WorkspaceListView(userDisplayName: "Preview User", onSignOut: {})
+    WorkspaceListView(userDisplayName: "Preview User", userEmail: "preview@example.com", onSignOut: {})
 }
