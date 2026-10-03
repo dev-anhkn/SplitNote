@@ -19,9 +19,7 @@ struct SheetsSpreadsheetSetupService {
     }
 
     func createSpreadsheet(title: String, firstTabTitle: String, members: [String]) async throws -> CreatedSpreadsheet {
-        print("[SplitNote][createSpreadsheet] bắt đầu — title=\(title) firstTabTitle=\(firstTabTitle) members=\(members)")
         let accessToken = try await GoogleAPIAuth.currentAccessToken()
-        print("[SplitNote][createSpreadsheet] đã lấy access token, len=\(accessToken.count)")
 
         // 1. Tạo spreadsheet chỉ với tab mẫu — chính là "base" sẽ nhân bản ra
         // tab tháng đầu tiên (và mọi tab tháng sau này).

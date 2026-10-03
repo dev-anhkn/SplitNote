@@ -221,11 +221,7 @@ final class WorkspaceListViewModel: ObservableObject {
     /// other devices can find it later. A tagging failure doesn't block the
     /// flow — the sheet is already usable here — but is surfaced as a warning.
     func createWorkspace(_ type: WorkspaceType) async {
-        guard type.isAvailable, let index = store.nextAvailableIndex(for: type) else {
-            print("[SplitNote][createWorkspace] bỏ qua — type=\(type) isAvailable=\(type.isAvailable) index=\(String(describing: store.nextAvailableIndex(for: type)))")
-            return
-        }
-        print("[SplitNote][createWorkspace] bấm + tạo — type=\(type) index=\(index)")
+        guard type.isAvailable, let index = store.nextAvailableIndex(for: type) else { return }
         isCreating = true
         errorMessage = nil
         defer { isCreating = false }
@@ -237,21 +233,18 @@ final class WorkspaceListViewModel: ObservableObject {
         let members = type == .family ? [userDisplayName] : []
         do {
             let created = try await sheetsService.createSpreadsheet(title: "SplitNote - \(displayName)", firstTabTitle: tabTitle, members: members)
-            print("[SplitNote][createWorkspace] createSpreadsheet thành công — id=\(created.spreadsheetId)")
             // Lưu local ngay để dùng được dù bước gắn thẻ bên dưới có lỗi.
             store.setSpreadsheetId(created.spreadsheetId, for: type, at: index)
             reloadWorkspaces()
             do {
                 try await driveService.tagFile(fileId: created.spreadsheetId, key: WorkspaceDiscoveryService.workspaceTypePropertyKey, value: WorkspaceDiscoveryService.tagValue(type: type, index: index))
             } catch {
-                print("[SplitNote][createWorkspace] tagFile lỗi: \(error)")
                 errorMessage = "\(displayName) đã tạo, nhưng gắn thẻ Drive thất bại nên có thể sẽ không tự tìm thấy được trên thiết bị khác: \(error.localizedDescription)"
             }
             activeSession = ActiveSession(spreadsheetId: created.spreadsheetId, tabTitle: tabTitle, spreadsheetURL: created.url, workspaceType: type)
             // Đồng bộ sidebar với session vừa mở, không chạy lại openWorkspace.
             setSelection(to: Workspace(type: type, index: index, spreadsheetId: created.spreadsheetId))
         } catch {
-            print("[SplitNote][createWorkspace] LỖI: \(error)")
             errorMessage = error.localizedDescription
         }
     }
