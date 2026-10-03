@@ -16,9 +16,7 @@ final class ExpenseListViewModel: ObservableObject {
     @Published private(set) var sheetMissing = false
     @Published private(set) var isCreatingSheet = false
     @Published var errorMessage: String?
-    @Published var isShowingQuickAdd = false
     @Published private(set) var selectedMonth: Date
-    @Published var isShowingMembers = false
 
     let spreadsheetId: String
     let workspaceType: WorkspaceType

@@ -11,6 +11,7 @@ import SwiftUI
 struct WorkspaceListView: View {
     @StateObject private var viewModel: WorkspaceListViewModel
     @State private var workspacePendingDeletion: WorkspaceListViewModel.Workspace?
+    @State private var isShowingCreatePicker = false
     let userDisplayName: String
     let onSignOut: () -> Void
 
@@ -39,13 +40,7 @@ struct WorkspaceListView: View {
             } else {
                 List(selection: $viewModel.selectedWorkspace) {
                     ForEach(viewModel.workspaces) { workspace in
-                        HStack {
-                            Text(workspace.displayName)
-                            Spacer()
-                            if viewModel.openingWorkspaceId == workspace.id {
-                                ProgressView()
-                            }
-                        }
+                        WorkspaceRow(workspace: workspace, isOpening: viewModel.openingWorkspaceId == workspace.id)
                         .tag(workspace)
                         .disabled(viewModel.isBusy)
                         .destructiveRowAction {
@@ -53,56 +48,51 @@ struct WorkspaceListView: View {
                         }
                     }
 
-                    if viewModel.workspaces.isEmpty {
-                        Text("Chưa có workspace nào — bấm + để tạo")
-                            .foregroundStyle(.secondary)
-                    }
-
                     if let message = viewModel.errorMessage {
-                        Text(message)
+                        Label(message, systemImage: "exclamationmark.triangle.fill")
                             .foregroundStyle(.red)
                     }
                 }
+                .overlay {
+                    if viewModel.workspaces.isEmpty {
+                        ContentUnavailableView(
+                            "Chưa có workspace",
+                            systemImage: "tray",
+                            description: Text("Bấm \"Workspace mới\" để tạo sổ chi tiêu cá nhân hoặc gia đình.")
+                        )
+                    }
+                }
+                // Tách khỏi toolbar để không bị gộp vào menu ">>" khi sidebar hẹp.
+                .safeAreaInset(edge: .bottom) {
+                    createWorkspaceBar
+                }
+                #if os(macOS)
+                // Toolbar trên macOS dùng chung với màn chi tiết nên nút bị đẩy vào ">>" — đặt riêng trong sidebar.
+                .safeAreaInset(edge: .top) {
+                    sidebarHeader
+                }
+                #endif
             }
         }
         .navigationTitle("Workspaces")
         .toolbar {
+            #if os(iOS)
             if !viewModel.isLoadingWorkspaces {
                 ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        Task { await viewModel.refreshWorkspaces() }
-                    } label: {
-                        if viewModel.isRefreshing {
-                            ProgressView()
-                        } else {
-                            Image(systemName: "arrow.clockwise")
-                        }
-                    }
-                    .disabled(viewModel.isBusy)
-                }
-                ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        viewModel.isShowingCreatePicker = true
-                    } label: {
-                        if viewModel.isCreating {
-                            ProgressView()
-                        } else {
-                            Image(systemName: "plus")
-                        }
-                    }
-                    .disabled(viewModel.availableTypesToCreate.isEmpty || viewModel.isBusy)
+                    refreshButton
                 }
             }
+            #endif
             ToolbarItem(placement: .cancellationAction) {
                 Menu {
                     Text(userDisplayName)
                     Button("Sign Out", role: .destructive, action: onSignOut)
                 } label: {
-                    Image(systemName: "person.circle")
+                    Image(systemName: "person.crop.circle.fill")
                 }
             }
         }
-        .confirmationDialog("Tạo workspace mới", isPresented: $viewModel.isShowingCreatePicker, titleVisibility: .visible) {
+        .confirmationDialog("Tạo workspace mới", isPresented: $isShowingCreatePicker, titleVisibility: .visible) {
             ForEach(viewModel.availableTypesToCreate, id: \.self) { type in
                 Button(type.displayName) {
                     Task { await viewModel.createWorkspace(type) }
@@ -131,6 +121,56 @@ struct WorkspaceListView: View {
         }
     }
 
+    private var refreshButton: some View {
+        ReloadButton(isLoading: viewModel.isRefreshing, help: "Tải lại danh sách workspace") {
+            Task { await viewModel.refreshWorkspaces() }
+        }
+        .disabled(viewModel.isBusy)
+    }
+
+    private var sidebarHeader: some View {
+        HStack {
+            Text("Workspaces")
+                .font(.headline)
+                .foregroundStyle(.secondary)
+            Spacer()
+            refreshButton
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+    }
+
+    private var createWorkspaceBar: some View {
+        HStack {
+            Button {
+                isShowingCreatePicker = true
+            } label: {
+                HStack(spacing: 6) {
+                    if viewModel.isCreating {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.title3)
+                    }
+                    Text("Workspace mới")
+                        .fontWeight(.medium)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .disabled(viewModel.availableTypesToCreate.isEmpty || viewModel.isBusy)
+
+            Spacer()
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 10)
+        .background(.bar)
+        .overlay(alignment: .top) {
+            Divider()
+        }
+    }
+
     @ViewBuilder
     private var detail: some View {
         if let session = viewModel.activeSession {
@@ -144,8 +184,35 @@ struct WorkspaceListView: View {
             // Đã chọn workspace, openWorkspace vẫn đang chạy.
             ProgressView()
         } else {
-            ContentUnavailableView("Chọn một workspace", systemImage: "tray")
+            ContentUnavailableView(
+                "Chọn một workspace",
+                systemImage: "sidebar.left",
+                description: Text("Chọn sổ chi tiêu ở danh sách bên trái để xem các khoản chi.")
+            )
         }
+    }
+}
+
+private struct WorkspaceRow: View {
+    let workspace: WorkspaceListViewModel.Workspace
+    let isOpening: Bool
+
+    var body: some View {
+        HStack(spacing: 12) {
+            IconBadge(systemName: workspace.type.icon, color: workspace.type.color)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(workspace.displayName)
+                    .font(.body.weight(.medium))
+                Text(workspace.type == .family ? "Chia tiền nhiều người" : "Chi tiêu của riêng bạn")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            if isOpening {
+                ProgressView()
+            }
+        }
+        .padding(.vertical, 4)
     }
 }
 

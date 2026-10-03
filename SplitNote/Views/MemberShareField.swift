@@ -16,10 +16,11 @@ struct MemberShareField: View {
     private var isAll: Bool { selectedMembers.count == members.count }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Chi cho ai")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                IconBadge(systemName: "person.2.fill", color: .orange, size: 28)
+                Text("Chi cho ai")
+            }
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     chip("Tất cả", isOn: isAll) {
@@ -46,15 +47,21 @@ struct MemberShareField: View {
 
     private func chip(_ title: String, isOn: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Text(title)
-                .font(.subheadline)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(isOn ? Color.accentColor : Color.gray.opacity(0.2))
-                .foregroundStyle(isOn ? Color.white : Color.primary)
-                .clipShape(Capsule())
+            HStack(spacing: 4) {
+                if isOn {
+                    Image(systemName: "checkmark")
+                        .font(.caption.weight(.bold))
+                }
+                Text(title)
+                    .font(.subheadline.weight(isOn ? .semibold : .regular))
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(isOn ? AnyShapeStyle(Color.accentColor.gradient) : AnyShapeStyle(.quaternary.opacity(0.5)), in: Capsule())
+            .foregroundStyle(isOn ? Color.white : Color.primary)
         }
         .buttonStyle(.plain)
+        .animation(.snappy, value: isOn)
     }
 }
 

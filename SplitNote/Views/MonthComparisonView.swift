@@ -39,25 +39,17 @@ struct MonthComparisonView: View {
                         .padding(.horizontal)
                     Spacer()
                 } else {
-                    Chart(viewModel.monthlyTotals) { item in
-                        BarMark(
-                            x: .value("Tháng", item.label),
-                            y: .value("Số tiền", NSDecimalNumber(decimal: item.total).doubleValue)
-                        )
-                        // 1 chỉ số duy nhất (tổng chi) theo thời gian, không
-                        // phải nhiều series cần phân biệt — giữ 1 màu nhất quán.
-                        .foregroundStyle(Color.accentColor)
-                        .annotation(position: .top) {
-                            Text(item.total.formattedVND)
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
+                    ScrollView {
+                        VStack(spacing: 16) {
+                            statsRow
+                            chart
                         }
+                        .padding(.horizontal)
                     }
-                    .padding(.horizontal)
-                    Spacer()
                 }
             }
             .padding(.top)
+            .animation(.snappy, value: viewModel.rangeInMonths)
             .navigationTitle("So sánh theo tháng")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -72,8 +64,77 @@ struct MonthComparisonView: View {
             }
         }
     }
+
+    private var rangeTotal: Decimal {
+        viewModel.monthlyTotals.reduce(0) { $0 + $1.total }
+    }
+
+    private var monthlyAverage: Decimal {
+        guard !viewModel.monthlyTotals.isEmpty else { return 0 }
+        return rangeTotal / Decimal(viewModel.monthlyTotals.count)
+    }
+
+    private var statsRow: some View {
+        HStack(spacing: 12) {
+            StatTile(title: "Tổng \(viewModel.rangeInMonths) tháng", value: rangeTotal.formattedVND, icon: "sum", color: .accentColor)
+            StatTile(title: "Trung bình/tháng", value: monthlyAverage.rounded.formattedVND, icon: "chart.line.flattrend.xyaxis", color: .orange)
+        }
+    }
+
+    private var chart: some View {
+        Chart(viewModel.monthlyTotals) { item in
+            BarMark(
+                x: .value("Tháng", item.label),
+                y: .value("Số tiền", NSDecimalNumber(decimal: item.total).doubleValue)
+            )
+            // 1 chỉ số duy nhất theo thời gian — giữ 1 màu nhất quán.
+            .foregroundStyle(Color.accentColor.gradient)
+            .cornerRadius(6)
+            .annotation(position: .top) {
+                Text(item.total.formattedVND)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .chartYAxis(.hidden)
+        .frame(height: 280)
+        .cardStyle()
+    }
 }
 
 #Preview {
     MonthComparisonView(spreadsheetId: "preview")
+}
+
+private struct StatTile: View {
+    let title: String
+    let value: String
+    let icon: String
+    let color: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            IconBadge(systemName: icon, color: color, size: 26)
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.system(.headline, design: .rounded))
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardStyle()
+    }
+}
+
+private extension Decimal {
+    /// VNĐ không có phần lẻ — làm tròn trung bình về số nguyên.
+    var rounded: Decimal {
+        var value = self
+        var result = Decimal()
+        NSDecimalRound(&result, &value, 0, .plain)
+        return result
+    }
 }

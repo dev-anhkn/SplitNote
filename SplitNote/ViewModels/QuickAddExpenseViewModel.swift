@@ -35,7 +35,8 @@ final class QuickAddExpenseViewModel: ObservableObject {
     @Published var selectedSharers: Set<String> = [] {
         didSet {
             didSave = false
-            guard selectedSharers.isEmpty else { return }
+            // Thiếu `!members.isEmpty` thì gán Set rỗng lại gọi didSet → đệ quy vô hạn.
+            guard selectedSharers.isEmpty, !members.isEmpty else { return }
             selectedSharers = Set(members)
         }
     }

@@ -28,37 +28,22 @@ struct QuickAddExpenseView: View {
 
     var body: some View {
         Form {
-            Section(screenTitle) {
-                // .onSubmit trên từng field (không phải 1 lần trên Form) để Return
-                // submit được từ bất kỳ field nào, thay vì chỉ chuyển focus.
-                TextField("Số tiền", text: $viewModel.amountText)
-                    #if os(iOS)
-                    .keyboardType(.decimalPad)
-                    #endif
-                    .onSubmit(attemptSubmit)
-                TextField("Nội dung", text: $viewModel.content)
-                    .onSubmit(attemptSubmit)
-                // submitScope: Enter ở đây chỉ xác nhận gợi ý Loại, không submit cả form.
-                CategoryPickerField(selection: $viewModel.category)
-                    .submitScope()
-
-                if viewModel.isFamily {
-                    Picker("Ai chi", selection: $viewModel.paidBy) {
-                        ForEach(viewModel.members, id: \.self) { member in
-                            Text(member).tag(member)
-                        }
-                    }
-                    MemberShareField(members: viewModel.members, selectedMembers: $viewModel.selectedSharers)
-                }
+            amountSection
+            detailSection
+            if viewModel.isFamily {
+                shareSection
             }
 
             if let message = viewModel.errorMessage {
                 Section {
-                    Text(message)
+                    Label(message, systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.red)
                 }
             }
         }
+        // Style .grouped + ẩn nhãn để các dòng thẳng hàng như iOS (mặc định trên macOS là 2 cột).
+        .formStyle(.grouped)
+        .textFieldStyle(.plain)
         .navigationTitle(screenTitle)
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
@@ -77,6 +62,61 @@ struct QuickAddExpenseView: View {
                 }
                 .disabled(!viewModel.canSubmit)
             }
+        }
+    }
+
+    private var amountSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Số tiền")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    TextField("Số tiền", text: $viewModel.amountText, prompt: Text("0"))
+                        .labelsHidden()
+                        #if os(iOS)
+                        .keyboardType(.decimalPad)
+                        #endif
+                        .font(.system(size: 36, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                        .onSubmit(attemptSubmit)
+                    Text("đ")
+                        .font(.system(size: 24, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.vertical, 6)
+        }
+    }
+
+    private var detailSection: some View {
+        Section("Chi tiết") {
+            // .onSubmit trên từng field (không phải 1 lần trên Form) để Return submit được từ bất kỳ field nào.
+            HStack(spacing: 12) {
+                IconBadge(systemName: "text.alignleft", color: .gray, size: 28)
+                TextField("Nội dung", text: $viewModel.content, prompt: Text("Nội dung"))
+                    .labelsHidden()
+                    .onSubmit(attemptSubmit)
+            }
+            // submitScope: Enter ở đây chỉ xác nhận gợi ý Loại, không submit cả form.
+            CategoryPickerField(selection: $viewModel.category)
+                .submitScope()
+        }
+    }
+
+    private var shareSection: some View {
+        Section("Chia tiền") {
+            Picker(selection: $viewModel.paidBy) {
+                ForEach(viewModel.members, id: \.self) { member in
+                    Text(member).tag(member)
+                }
+            } label: {
+                HStack(spacing: 12) {
+                    IconBadge(systemName: "creditcard.fill", color: .green, size: 28)
+                    Text("Ai chi")
+                }
+            }
+            MemberShareField(members: viewModel.members, selectedMembers: $viewModel.selectedSharers)
         }
     }
 

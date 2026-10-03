@@ -49,16 +49,16 @@ struct SheetsSpreadsheetSetupService {
             throw SheetsServiceError.invalidResponse
         }
 
-        // 2. Header + tổng + dropdown ngay trên tab mẫu, rồi ẩn nó đi.
+        // 2. Header + tổng + dropdown ngay trên tab mẫu.
         try await writeHeaderAndTotal(spreadsheetId: spreadsheetId, tabTitle: SheetsLayout.templateTabTitle, accessToken: accessToken)
         try await applyCategoryValidation(spreadsheetId: spreadsheetId, sheetId: templateSheetId, accessToken: accessToken)
         if !members.isEmpty {
             try await membersService.writeFamilyBlocks(spreadsheetId: spreadsheetId, tabTitle: SheetsLayout.templateTabTitle, sheetId: templateSheetId, members: members, accessToken: accessToken)
         }
-        try await setSheetHidden(spreadsheetId: spreadsheetId, sheetId: templateSheetId, hidden: true, accessToken: accessToken)
 
-        // 3. Nhân bản tab mẫu thành tab tháng đầu tiên.
+        // 3. Nhân bản tab mẫu thành tab tháng đầu tiên, rồi mới ẩn tab mẫu — Google không cho ẩn tab duy nhất.
         try await duplicateTemplateTab(spreadsheetId: spreadsheetId, templateSheetId: templateSheetId, newTitle: firstTabTitle, accessToken: accessToken)
+        try await setSheetHidden(spreadsheetId: spreadsheetId, sheetId: templateSheetId, hidden: true, accessToken: accessToken)
 
         // 4. Tab "Tổng hợp" ghim đầu + hàng công thức cho tháng đầu tiên.
         try await summaryService.createSummaryTab(spreadsheetId: spreadsheetId, accessToken: accessToken)
@@ -274,6 +274,8 @@ struct SheetsSpreadsheetSetupService {
                 [
                     "duplicateSheet": [
                         "sourceSheetId": templateSheetId,
+                        // Thiếu index thì Google chèn lên đầu, đẩy "Tổng hợp" (ghim ở 0) xuống.
+                        "insertSheetIndex": 1,
                         "newSheetName": newTitle
                     ]
                 ]
@@ -352,9 +354,6 @@ struct SheetsSpreadsheetSetupService {
     /// Writes the A1:E1 header and G1/G2 "Tổng cộng" label + `SUM` formula.
     /// `USER_ENTERED` (not `RAW`) so the formula actually evaluates.
     private func writeHeaderAndTotal(spreadsheetId: String, tabTitle: String, accessToken: String) async throws {
-        guard let encodedTitle = SheetsHTTP.percentEncodedTabTitle(tabTitle) else {
-            throw SheetsServiceError.invalidResponse
-        }
         var request = URLRequest(url: URL(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetId)/values:batchUpdate")!)
         request.httpMethod = "POST"
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
@@ -362,8 +361,8 @@ struct SheetsSpreadsheetSetupService {
         request.httpBody = try JSONSerialization.data(withJSONObject: [
             "valueInputOption": "USER_ENTERED",
             "data": [
-                ["range": "'\(encodedTitle)'!A1:E1", "values": [SheetsLayout.headerColumns]],
-                ["range": "'\(encodedTitle)'!G1:G2", "values": [[SheetsLayout.totalLabel], [SheetsLayout.totalFormula]]]
+                ["range": SheetsHTTP.bodyRange(tabTitle: tabTitle, cells: "A1:E1"), "values": [SheetsLayout.headerColumns]],
+                ["range": SheetsHTTP.bodyRange(tabTitle: tabTitle, cells: "G1:G2"), "values": [[SheetsLayout.totalLabel], [SheetsLayout.totalFormula]]]
             ]
         ])
 

@@ -22,53 +22,99 @@ struct LoginView: View {
     }
 
     private var signInPrompt: some View {
-        VStack(spacing: 40) {
+        VStack(spacing: 28) {
             Spacer()
+            appHeader
+            featureCard
+            Spacer()
+            signInSection
+        }
+        .padding(.horizontal, 28)
+        .padding(.bottom, 24)
+        .frame(maxWidth: 480)
+        .frame(maxWidth: .infinity)
+    }
 
-            VStack(spacing: 8) {
-                Image(systemName: "square.split.2x1")
-                    .font(.system(size: 48))
-                    .foregroundStyle(.tint)
+    private var appHeader: some View {
+        VStack(spacing: 14) {
+            // Quầng sáng mờ sau icon cho màn chào bớt trống.
+            ZStack {
+                Circle()
+                    .fill(Color.accentColor.opacity(0.18))
+                    .frame(width: 130, height: 130)
+                    .blur(radius: 18)
+                IconBadge(systemName: "square.split.2x1.fill", color: .accentColor, size: 84)
+                    .shadow(color: .black.opacity(0.15), radius: 8, y: 4)
+            }
+
+            VStack(spacing: 6) {
                 Text("SplitNote")
-                    .font(.largeTitle)
-                    .fontWeight(.bold)
-                Text("Split expenses with a single line of text")
+                    .font(.system(size: 34, weight: .bold, design: .rounded))
+                Text("Ghi chi tiêu và chia tiền chỉ bằng một dòng chữ")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
             }
+        }
+    }
 
-            Spacer()
+    private var featureCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            FeatureRow(icon: "text.cursor", color: .blue, title: "Nhập nhanh", detail: "Gõ số tiền và nội dung, SplitNote tự phân loại.")
+            FeatureRow(icon: "person.2.fill", color: .orange, title: "Chia cho gia đình", detail: "Ghi ai chi, chia cho ai trong cùng một sheet.")
+            FeatureRow(icon: "tablecells.fill", color: .green, title: "Lưu trên Google Sheets", detail: "Dữ liệu nằm trong Drive của bạn.")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardStyle()
+    }
 
-            VStack(spacing: 12) {
-                Button {
-                    Task { await viewModel.signIn() }
-                } label: {
-                    HStack(spacing: 10) {
-                        if viewModel.isSigningIn {
-                            ProgressView()
-                        } else {
-                            Text("G")
-                                .font(.system(size: 16, weight: .bold))
-                        }
-                        Text("Sign in with Google")
-                            .font(.system(size: 16, weight: .medium))
+    private var signInSection: some View {
+        VStack(spacing: 12) {
+            Button {
+                Task { await viewModel.signIn() }
+            } label: {
+                HStack(spacing: 10) {
+                    if viewModel.isSigningIn {
+                        ProgressView()
+                    } else {
+                        Text("G")
+                            .font(.system(size: 17, weight: .bold, design: .rounded))
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
+                    Text("Đăng nhập với Google")
+                        .font(.headline)
                 }
-                .buttonStyle(.bordered)
-                .tint(.primary)
-                .disabled(viewModel.isSigningIn)
-
-                if let message = viewModel.signInErrorMessage {
-                    Text(message)
-                        .font(.footnote)
-                        .foregroundStyle(.red)
-                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
             }
-            .padding(.horizontal, 32)
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .disabled(viewModel.isSigningIn)
 
-            Spacer()
+            if let message = viewModel.signInErrorMessage {
+                Label(message, systemImage: "exclamationmark.triangle.fill")
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+            }
+        }
+    }
+}
+
+private struct FeatureRow: View {
+    let icon: String
+    let color: Color
+    let title: String
+    let detail: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            IconBadge(systemName: icon, color: color, size: 30)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                Text(detail)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 }

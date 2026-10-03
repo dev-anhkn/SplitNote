@@ -14,6 +14,9 @@ struct ExpenseListView: View {
     @State private var entryPendingDeletion: ExpenseEntry?
     @State private var isShowingCategoryBreakdown = false
     @State private var isShowingMonthComparison = false
+    @State private var isShowingQuickAdd = false
+    @State private var isShowingMembers = false
+    @State private var isReloading = false
     private let spreadsheetId: String
     private let spreadsheetURL: URL?
     private let userDisplayName: String
@@ -41,7 +44,7 @@ struct ExpenseListView: View {
                 if viewModel.isFamily {
                     ToolbarItem(placement: .primaryAction) {
                         Button {
-                            viewModel.isShowingMembers = true
+                            isShowingMembers = true
                         } label: {
                             Image(systemName: "person.2")
                         }
@@ -65,14 +68,14 @@ struct ExpenseListView: View {
                 }
                 ToolbarItem(placement: .primaryAction) {
                     Button {
-                        viewModel.isShowingQuickAdd = true
+                        isShowingQuickAdd = true
                     } label: {
                         Image(systemName: "plus")
                     }
                 }
             }
         }
-        .sheet(isPresented: $viewModel.isShowingQuickAdd) {
+        .sheet(isPresented: $isShowingQuickAdd) {
             NavigationStack {
                 QuickAddExpenseView(spreadsheetId: spreadsheetId, tabTitle: viewModel.tabTitle, members: viewModel.familyMembers.members, currentUserName: userDisplayName) {
                     Task { await viewModel.loadEntries() }
@@ -86,7 +89,7 @@ struct ExpenseListView: View {
                 }
             }
         }
-        .sheet(isPresented: $viewModel.isShowingMembers) {
+        .sheet(isPresented: $isShowingMembers) {
             NavigationStack {
                 FamilyMembersView(viewModel: viewModel.familyMembers)
             }
@@ -124,22 +127,15 @@ struct ExpenseListView: View {
     }
 
     private var expenseList: some View {
-        // Header ngoài List (không phải Section footer) để luôn ở trên cùng
-        // khi danh sách dài ra, thay vì bị đẩy xuống cuối.
-        VStack(spacing: 0) {
+        // Header ngoài List (không phải Section footer) để luôn ở trên cùng khi danh sách dài ra.
+        VStack(spacing: 12) {
             monthNavigationHeader
-
-            if !viewModel.entries.isEmpty {
-                totalHeader
-                Divider()
-            }
+            summaryCard
+                .padding(.horizontal)
 
             List {
-                if viewModel.entries.isEmpty {
-                    Text("Chưa có khoản chi nào trong tháng này — bấm + để thêm")
-                        .foregroundStyle(.secondary)
-                } else {
-                    Section {
+                if !viewModel.entries.isEmpty {
+                    Section("Khoản chi") {
                         ForEach(viewModel.entries) { entry in
                             Button {
                                 editingEntry = entry
@@ -155,14 +151,25 @@ struct ExpenseListView: View {
                 }
 
                 if let message = viewModel.errorMessage {
-                    Text(message)
+                    Label(message, systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.red)
                 }
 
                 if let url = spreadsheetURL {
                     Section {
-                        Link("Mở Google Sheet ↗", destination: url)
+                        Link(destination: url) {
+                            Label("Mở Google Sheet", systemImage: "arrow.up.right.square")
+                        }
                     }
+                }
+            }
+            .overlay {
+                if viewModel.entries.isEmpty {
+                    ContentUnavailableView(
+                        "Chưa có khoản chi",
+                        systemImage: "tray",
+                        description: Text("Bấm + để thêm khoản chi đầu tiên của tháng này.")
+                    )
                 }
             }
         }
@@ -170,68 +177,97 @@ struct ExpenseListView: View {
 
     private var monthNavigationHeader: some View {
         HStack {
-            Button {
+            MonthStepButton(systemName: "chevron.left") {
                 viewModel.goToPreviousMonth()
-            } label: {
-                Image(systemName: "chevron.left")
             }
 
             Spacer()
 
-            Text(viewModel.tabTitle)
-                .font(.headline)
+            HStack(spacing: 8) {
+                Text(viewModel.tabTitle)
+                    .font(.system(.headline, design: .rounded))
+                #if os(macOS)
+                // macOS không có kéo-xuống-để-tải-lại như iOS nên cần nút riêng.
+                reloadButton
+                #endif
+            }
 
             Spacer()
 
-            Button {
+            MonthStepButton(systemName: "chevron.right") {
                 viewModel.goToNextMonth()
-            } label: {
-                Image(systemName: "chevron.right")
             }
             .disabled(viewModel.isCurrentMonth)
         }
         .padding(.horizontal)
-        .padding(.vertical, 8)
+        .padding(.top, 8)
     }
 
-    private var totalHeader: some View {
-        HStack {
-            Text("Tổng cộng")
-                .font(.headline)
-            Spacer()
-            Text(viewModel.totalAmount.formattedVND)
-                .font(.headline)
-                .monospacedDigit()
+    private var reloadButton: some View {
+        ReloadButton(isLoading: isReloading, help: "Tải lại khoản chi (⌘R)") {
+            Task { await reload() }
         }
-        .padding()
+        .keyboardShortcut("r", modifiers: .command)
+    }
+
+    private func reload() async {
+        isReloading = true
+        defer { isReloading = false }
+        await viewModel.loadEntries()
+    }
+
+    private var summaryCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Tổng chi tháng này")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Text(viewModel.totalAmount.formattedVND)
+                .font(.system(size: 32, weight: .bold, design: .rounded))
+                .monospacedDigit()
+                .contentTransition(.numericText())
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+            StatusPill(text: "\(viewModel.entries.count) khoản chi", color: .accentColor)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardStyle()
     }
 
     private var missingSheetView: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 16) {
             monthNavigationHeader
 
-            if viewModel.isCurrentMonth {
-                Text("Chưa có sheet cho \(viewModel.tabTitle)")
-                    .foregroundStyle(.secondary)
+            Spacer()
 
-                Button {
-                    Task { await viewModel.createMissingSheet() }
-                } label: {
-                    if viewModel.isCreatingSheet {
-                        ProgressView()
-                    } else {
-                        Label("Tạo sheet tháng này", systemImage: "plus")
+            if viewModel.isCurrentMonth {
+                ContentUnavailableView {
+                    Label("Chưa có sheet cho \(viewModel.tabTitle)", systemImage: "tablecells.badge.ellipsis")
+                } description: {
+                    Text("Tạo sheet để bắt đầu ghi chi tiêu tháng này.")
+                } actions: {
+                    Button {
+                        Task { await viewModel.createMissingSheet() }
+                    } label: {
+                        if viewModel.isCreatingSheet {
+                            ProgressView()
+                        } else {
+                            Label("Tạo sheet tháng này", systemImage: "plus")
+                        }
                     }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .disabled(viewModel.isCreatingSheet)
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(viewModel.isCreatingSheet)
             } else {
-                Text("Không có khoản chi nào cho \(viewModel.tabTitle)")
-                    .foregroundStyle(.secondary)
+                ContentUnavailableView(
+                    "Không có khoản chi nào",
+                    systemImage: "calendar.badge.exclamationmark",
+                    description: Text("\(viewModel.tabTitle) chưa được ghi chi tiêu.")
+                )
             }
 
             if let message = viewModel.errorMessage {
-                Text(message)
+                Label(message, systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(.red)
             }
 
@@ -241,31 +277,59 @@ struct ExpenseListView: View {
     }
 }
 
+private struct MonthStepButton: View {
+    let systemName: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.subheadline.weight(.semibold))
+                .frame(width: 34, height: 34)
+                .background(.quaternary.opacity(0.5), in: Circle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 private struct ExpenseRowView: View {
     let entry: ExpenseEntry
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(entry.content.isEmpty ? entry.category : entry.content)
-                Spacer()
-                Text(entry.amount.formattedVND)
-                    .monospacedDigit()
-            }
-            HStack {
-                Text(entry.category)
-                Spacer()
-                Text(entry.date)
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
+    private var category: ExpenseCategory {
+        ExpenseCategory.from(entry.category)
+    }
 
-            if !entry.paidBy.isEmpty {
-                Text(shareSummary)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+    var body: some View {
+        HStack(spacing: 12) {
+            IconBadge(systemName: category.icon, color: category.color, size: 36)
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack {
+                    Text(entry.content.isEmpty ? entry.category : entry.content)
+                        .font(.body.weight(.medium))
+                        .lineLimit(1)
+                    Spacer()
+                    Text(entry.amount.formattedVND)
+                        .font(.body.weight(.semibold))
+                        .monospacedDigit()
+                }
+                HStack {
+                    Text(entry.category)
+                    Spacer()
+                    Text(entry.date)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+                if !entry.paidBy.isEmpty {
+                    Label(shareSummary, systemImage: "person.2")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
         }
+        .padding(.vertical, 2)
         // Không có dòng này thì Spacer/padding không nhận tap được.
         .contentShape(Rectangle())
     }

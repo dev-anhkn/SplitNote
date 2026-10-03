@@ -93,8 +93,8 @@ struct SheetsMembersService {
         headerRequest.httpBody = try JSONSerialization.data(withJSONObject: [
             "valueInputOption": "USER_ENTERED",
             "data": [
-                ["range": "'\(encodedTitle)'!I1:K1", "values": [SheetsLayout.familyHeaderColumns]],
-                ["range": "'\(encodedTitle)'!M1:P1", "values": [SheetsLayout.balanceHeaderColumns]]
+                ["range": SheetsHTTP.bodyRange(tabTitle: tabTitle, cells: "I1:K1"), "values": [SheetsLayout.familyHeaderColumns]],
+                ["range": SheetsHTTP.bodyRange(tabTitle: tabTitle, cells: "M1:P1"), "values": [SheetsLayout.balanceHeaderColumns]]
             ]
         ])
         let (headerData, headerResponse) = try await URLSession.shared.data(for: headerRequest)
