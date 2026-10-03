@@ -29,8 +29,17 @@ final class QuickAddExpenseViewModel: ObservableObject {
     /// Who paid — only meaningful when `isFamily`. Defaults to the current
     /// user but stays editable for entering someone else's expense.
     @Published var paidBy: String = "" { didSet { didSave = false } }
-    /// Who this expense splits across — `MemberShareField` refuses to deselect the last member, so this never ends up empty.
-    @Published var selectedSharers: Set<String> = [] { didSet { didSave = false } }
+    /// Who this expense splits across. Defaults to every member ("Tất cả"
+    /// in the UI) — never left empty, since an empty set has no meaningful
+    /// "chia đều" denominator.
+    @Published var selectedSharers: Set<String> = [] {
+        didSet {
+            didSave = false
+            // Thiếu `!members.isEmpty` thì gán Set rỗng lại gọi didSet → đệ quy vô hạn.
+            guard selectedSharers.isEmpty, !members.isEmpty else { return }
+            selectedSharers = Set(members)
+        }
+    }
     @Published private(set) var isSubmitting = false
     @Published var errorMessage: String?
     /// Flipped after a successful `submitEntry()` so the presenting sheet

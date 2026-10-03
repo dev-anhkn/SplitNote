@@ -25,61 +25,6 @@ struct SheetsSpreadsheetSetupService {
 
         // 1. Tạo spreadsheet chỉ với tab mẫu — chính là "base" sẽ nhân bản ra
         // tab tháng đầu tiên (và mọi tab tháng sau này).
-        let (spreadsheetId, url, templateSheetId) = try await createBareSpreadsheet(title: title, accessToken: accessToken)
-        print("[SplitNote][createSpreadsheet] bước 1 xong — spreadsheetId=\(spreadsheetId) templateSheetId=\(templateSheetId)")
-
-        do {
-            // 2. Header + tổng + dropdown ngay trên tab mẫu.
-            try await writeHeaderAndTotal(spreadsheetId: spreadsheetId, tabTitle: SheetsLayout.templateTabTitle, accessToken: accessToken)
-            print("[SplitNote][createSpreadsheet] bước 2a writeHeaderAndTotal xong")
-            try await applyCategoryValidation(spreadsheetId: spreadsheetId, sheetId: templateSheetId, accessToken: accessToken)
-            print("[SplitNote][createSpreadsheet] bước 2b applyCategoryValidation xong")
-            if !members.isEmpty {
-                try await membersService.writeFamilyBlocks(spreadsheetId: spreadsheetId, tabTitle: SheetsLayout.templateTabTitle, sheetId: templateSheetId, members: members, accessToken: accessToken)
-                print("[SplitNote][createSpreadsheet] bước 2c writeFamilyBlocks xong")
-            }
-
-            // 3. Tạo tab "Tổng hợp" ghim đầu — giờ spreadsheet đã có 2 tab
-            // (tab mẫu + "Tổng hợp"), nên bước 4 ẩn tab mẫu mới không bị
-            // Sheets từ chối vì "ẩn hết mọi tab trong 1 document".
-            try await summaryService.createSummaryTab(spreadsheetId: spreadsheetId, accessToken: accessToken)
-            print("[SplitNote][createSpreadsheet] bước 3 createSummaryTab xong")
-
-            // 4. Ẩn tab mẫu.
-            try await setSheetHidden(spreadsheetId: spreadsheetId, sheetId: templateSheetId, hidden: true, accessToken: accessToken)
-            print("[SplitNote][createSpreadsheet] bước 4 setSheetHidden xong")
-
-            // 5. Nhân bản tab mẫu thành tab tháng đầu tiên, rồi ghi hàng công
-            // thức tương ứng vào "Tổng hợp". insertIndex=2 vì lúc này chắc
-            // chắn chỉ có đúng 2 tab (Tổng hợp@0, _Mẫu@1) — chèn ngay sau.
-            try await duplicateTemplateTab(spreadsheetId: spreadsheetId, templateSheetId: templateSheetId, newTitle: firstTabTitle, insertIndex: 2, accessToken: accessToken)
-            print("[SplitNote][createSpreadsheet] bước 5a duplicateTemplateTab xong")
-            try await summaryService.ensureSummaryRow(spreadsheetId: spreadsheetId, tabTitle: firstTabTitle, accessToken: accessToken)
-            print("[SplitNote][createSpreadsheet] bước 5b ensureSummaryRow xong")
-
-            // 6. Danh sách thành viên ghi thẳng vào sheet (không phải local) —
-            // để bất kỳ ai mở đúng spreadsheet này (kể cả từ thiết bị khác, một
-            // khi mời qua tài khoản Google thật xong) đều thấy cùng một danh sách.
-            if !members.isEmpty {
-                try await membersService.setMembers(spreadsheetId: spreadsheetId, members: members, accessToken: accessToken)
-                print("[SplitNote][createSpreadsheet] bước 6 setMembers xong")
-            }
-        } catch {
-            print("[SplitNote][createSpreadsheet] LỖI giữa chừng: \(error)")
-            // Lỗi giữa chừng thì sheet ở bước 1 đã tồn tại trên Drive nhưng
-            // chưa kịp lưu id/tag — app sẽ không thấy nó và lần tạo sau lại đẻ
-            // thêm 1 sheet mới. Xoá bản nháp lỗi để không tích rác trên Drive.
-            try? await DriveService().trashFile(fileId: spreadsheetId)
-            throw error
-        }
-
-        print("[SplitNote][createSpreadsheet] hoàn tất thành công — spreadsheetId=\(spreadsheetId)")
-        return CreatedSpreadsheet(spreadsheetId: spreadsheetId, url: url)
-    }
-
-    /// Bước 1 tách riêng: tạo spreadsheet chỉ với tab mẫu, trả về id/url và
-    /// sheetId của tab mẫu để các bước sau dùng.
-    private func createBareSpreadsheet(title: String, accessToken: String) async throws -> (spreadsheetId: String, url: URL, templateSheetId: Int) {
         var request = URLRequest(url: URL(string: "https://sheets.googleapis.com/v4/spreadsheets")!)
         request.httpMethod = "POST"
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
@@ -108,7 +53,30 @@ struct SheetsSpreadsheetSetupService {
         else {
             throw SheetsServiceError.invalidResponse
         }
-        return (spreadsheetId, url, templateSheetId)
+
+        // 2. Header + tổng + dropdown ngay trên tab mẫu.
+        try await writeHeaderAndTotal(spreadsheetId: spreadsheetId, tabTitle: SheetsLayout.templateTabTitle, accessToken: accessToken)
+        try await applyCategoryValidation(spreadsheetId: spreadsheetId, sheetId: templateSheetId, accessToken: accessToken)
+        if !members.isEmpty {
+            try await membersService.writeFamilyBlocks(spreadsheetId: spreadsheetId, tabTitle: SheetsLayout.templateTabTitle, sheetId: templateSheetId, members: members, accessToken: accessToken)
+        }
+
+        // 3. Nhân bản tab mẫu thành tab tháng đầu tiên, rồi mới ẩn tab mẫu — Google không cho ẩn tab duy nhất.
+        try await duplicateTemplateTab(spreadsheetId: spreadsheetId, templateSheetId: templateSheetId, newTitle: firstTabTitle, insertIndex: 1, accessToken: accessToken)
+        try await setSheetHidden(spreadsheetId: spreadsheetId, sheetId: templateSheetId, hidden: true, accessToken: accessToken)
+
+        // 4. Tab "Tổng hợp" ghim đầu + hàng công thức cho tháng đầu tiên.
+        try await summaryService.createSummaryTab(spreadsheetId: spreadsheetId, accessToken: accessToken)
+        try await summaryService.ensureSummaryRow(spreadsheetId: spreadsheetId, tabTitle: firstTabTitle, accessToken: accessToken)
+
+        // 5. Danh sách thành viên ghi thẳng vào sheet (không phải local) —
+        // để bất kỳ ai mở đúng spreadsheet này (kể cả từ thiết bị khác, một
+        // khi mời qua tài khoản Google thật xong) đều thấy cùng một danh sách.
+        if !members.isEmpty {
+            try await membersService.setMembers(spreadsheetId: spreadsheetId, members: members, accessToken: accessToken)
+        }
+
+        return CreatedSpreadsheet(spreadsheetId: spreadsheetId, url: url)
     }
 
     func ensureTab(spreadsheetId: String, tabTitle: String) async throws {
@@ -400,8 +368,8 @@ struct SheetsSpreadsheetSetupService {
         request.httpBody = try JSONSerialization.data(withJSONObject: [
             "valueInputOption": "USER_ENTERED",
             "data": [
-                ["range": "'\(tabTitle)'!A1:D1", "values": [SheetsLayout.headerColumns]],
-                ["range": "'\(tabTitle)'!\(SheetsLayout.totalColumn)1:\(SheetsLayout.totalColumn)2", "values": [[SheetsLayout.totalLabel], [SheetsLayout.totalFormula]]]
+                ["range": SheetsHTTP.bodyRange(tabTitle: tabTitle, cells: "A1:E1"), "values": [SheetsLayout.headerColumns]],
+                ["range": SheetsHTTP.bodyRange(tabTitle: tabTitle, cells: "G1:G2"), "values": [[SheetsLayout.totalLabel], [SheetsLayout.totalFormula]]]
             ]
         ])
 

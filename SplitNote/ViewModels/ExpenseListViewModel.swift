@@ -20,9 +20,7 @@ final class ExpenseListViewModel: ObservableObject {
     /// chưa hay biết.
     @Published private(set) var isRefreshing = false
     @Published var errorMessage: String?
-    @Published var isShowingQuickAdd = false
     @Published private(set) var selectedMonth: Date
-    @Published var isShowingMembers = false
 
     let spreadsheetId: String
     let workspaceType: WorkspaceType

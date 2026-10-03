@@ -47,7 +47,6 @@ final class WorkspaceListViewModel: ObservableObject {
     }
     
     @Published private(set) var workspaces: [Workspace] = []
-    @Published var isShowingCreatePicker = false
     @Published private(set) var openingWorkspaceId: String?
     @Published private(set) var isCreating = false
     @Published private(set) var deletingWorkspaceId: String?
@@ -106,7 +105,7 @@ final class WorkspaceListViewModel: ObservableObject {
     
     func reloadWorkspaces() {
         var result: [Workspace] = []
-        for type in WorkspaceType.allCases {
+        for type in WorkspaceType.allCases where type.isAvailable {
             for index in 0..<WorkspaceStore.maxInstancesPerType {
                 if let id = store.spreadsheetId(for: type, at: index) {
                     result.append(Workspace(type: type, index: index, spreadsheetId: id))

@@ -68,20 +68,30 @@ struct CategoryBreakdownView: View {
             .foregroundStyle(Self.color(for: item.category))
             .cornerRadius(4)
         }
+        .chartBackground { _ in
+            VStack(spacing: 2) {
+                Text("Tổng")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(grandTotal.formattedVND)
+                    .font(.system(.headline, design: .rounded))
+                    .monospacedDigit()
+            }
+        }
         .frame(height: 260)
         .padding(.horizontal)
     }
 
     private var legend: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 12) {
             ForEach(viewModel.totals, id: \.category) { item in
-                HStack(spacing: 10) {
-                    Circle()
-                        .fill(Self.color(for: item.category))
-                        .frame(width: 10, height: 10)
+                let category = ExpenseCategory.from(item.category)
+                HStack(spacing: 12) {
+                    IconBadge(systemName: category.icon, color: category.color, size: 28)
                     Text(item.category)
                     Spacer()
                     Text(item.total.formattedVND)
+                        .fontWeight(.medium)
                         .monospacedDigit()
                     Text(Self.percentageText(item.total, of: grandTotal))
                         .foregroundStyle(.secondary)
@@ -90,6 +100,7 @@ struct CategoryBreakdownView: View {
                 .font(.subheadline)
             }
         }
+        .cardStyle()
         .padding(.horizontal)
     }
 

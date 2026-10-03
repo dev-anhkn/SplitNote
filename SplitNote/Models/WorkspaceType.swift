@@ -18,7 +18,8 @@ enum WorkspaceType: String, CaseIterable {
         }
     }
 
+    /// Gia đình tạm tắt — tập trung hoàn thiện Cá nhân trước.
     var isAvailable: Bool {
-        true
+        self == .personal
     }
 }

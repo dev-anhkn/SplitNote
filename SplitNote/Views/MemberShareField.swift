@@ -5,85 +5,63 @@
 
 import SwiftUI
 
-/// "Chi cho ai" multi-select — 1 hàng giống `Picker` ("Ai chi"): nhãn bên
-/// trái, bên phải là nút tóm tắt ("Tất cả" hoặc tên đã chọn) mở popover
-/// checklist. Dùng `.popover` thay vì `Menu` vì `Menu` tự đóng sau mỗi lần
-/// chọn — không chọn được nhiều người trong 1 lần mở. Never lets
-/// `selectedMembers` end up empty — an empty set has no meaningful "chia
-/// đều" denominator.
+/// "Chi cho ai" multi-select: a row of tappable chips — "Tất cả" plus one
+/// per member. Never lets `selectedMembers` end up empty (the view model's
+/// `didSet` already guards this too; this is just belt-and-suspenders for
+/// the tap gesture itself).
 struct MemberShareField: View {
     let members: [String]
     @Binding var selectedMembers: Set<String>
-    @State private var isShowingPicker = false
 
     private var isAll: Bool { selectedMembers.count == members.count }
 
-    private var summaryLabel: String {
-        isAll ? "Tất cả" : members.filter(selectedMembers.contains).joined(separator: ", ")
-    }
-
     var body: some View {
-        HStack {
-            Text("Chi cho ai")
-            Spacer()
-            Button {
-                isShowingPicker = true
-            } label: {
-                HStack(spacing: 4) {
-                    Text(summaryLabel)
-                        .lineLimit(1)
-                        .foregroundStyle(.secondary)
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                IconBadge(systemName: "person.2.fill", color: .orange, size: 28)
+                Text("Chi cho ai")
             }
-            .buttonStyle(.plain)
-            .popover(isPresented: $isShowingPicker) {
-                checklist
-            }
-        }
-    }
-
-    private var checklist: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            checklistRow("Tất cả", isOn: isAll) {
-                selectedMembers = Set(members)
-            }
-            Divider()
-            ForEach(members, id: \.self) { member in
-                checklistRow(member, isOn: selectedMembers.contains(member)) {
-                    toggle(member)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    chip("Tất cả", isOn: isAll) {
+                        selectedMembers = Set(members)
+                    }
+                    ForEach(members, id: \.self) { member in
+                        chip(member, isOn: selectedMembers.contains(member)) {
+                            toggle(member)
+                        }
+                    }
                 }
             }
         }
-        .padding(8)
-        .frame(minWidth: 220)
-    }
-
-    private func checklistRow(_ title: String, isOn: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack {
-                Image(systemName: "checkmark")
-                    .opacity(isOn ? 1 : 0)
-                    .frame(width: 16)
-                Text(title)
-                Spacer()
-            }
-            .padding(.vertical, 4)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
+        .padding(.vertical, 4)
     }
 
     private func toggle(_ member: String) {
         if selectedMembers.contains(member) {
-            // Không cho bỏ chọn nốt người cuối cùng.
-            guard selectedMembers.count > 1 else { return }
             selectedMembers.remove(member)
         } else {
             selectedMembers.insert(member)
         }
+    }
+
+    private func chip(_ title: String, isOn: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                if isOn {
+                    Image(systemName: "checkmark")
+                        .font(.caption.weight(.bold))
+                }
+                Text(title)
+                    .font(.subheadline.weight(isOn ? .semibold : .regular))
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(isOn ? AnyShapeStyle(Color.accentColor.gradient) : AnyShapeStyle(.quaternary.opacity(0.5)), in: Capsule())
+            .foregroundStyle(isOn ? Color.white : Color.primary)
+        }
+        .buttonStyle(.plain)
+        .animation(.snappy, value: isOn)
     }
 }
 
