@@ -5,13 +5,18 @@
 
 import SwiftUI
 
-/// Screen 1 after sign-in: list of workspaces already created (up to
-/// `WorkspaceStore.maxInstancesPerType` per type). `NavigationSplitView`
-/// adapts on its own: sidebar+detail on Mac/iPad, list-then-push on iPhone.
+/// Màn đầu sau đăng nhập: danh sách workspace (sidebar trên Mac/iPad, push trên iPhone).
 struct WorkspaceListView: View {
     @StateObject private var viewModel: WorkspaceListViewModel
     @State private var workspacePendingDeletion: WorkspaceListViewModel.Workspace?
     @State private var isShowingCreatePicker = false
+    /// Loại đang chờ đặt tên trước khi tạo.
+    @State private var namingType: WorkspaceType?
+    @State private var newWorkspaceName = ""
+    @State private var renamingWorkspace: WorkspaceListViewModel.Workspace?
+    @State private var renameText = ""
+    /// Bản sao cho `List(selection:)` — ghi thẳng vào `@Published` trong lúc vẽ sẽ bị cảnh báo.
+    @State private var sidebarSelection: WorkspaceListViewModel.Workspace?
     let userDisplayName: String
     let userEmail: String
     let onSignOut: () -> Void
@@ -26,11 +31,24 @@ struct WorkspaceListView: View {
     var body: some View {
         NavigationSplitView {
             sidebar
+                // Chặn dưới: hẹp hơn thì nút tài khoản bị dồn vào menu "»" và cắt chữ; vẫn cho kéo rộng như sidebar macOS.
+                .navigationSplitViewColumnWidth(min: AppStyle.sidebarMinWidth, ideal: AppStyle.sidebarMinWidth, max: AppStyle.sidebarMaxWidth)
         } detail: {
             detail
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(AppBackground())
         }
         .task {
             await viewModel.reconcileMissingWorkspaces()
+        }
+        // Đồng bộ 2 chiều sau khi cập nhật xong: người dùng bấm → view model; view model tự chọn (vd vừa tạo) → sidebar.
+        .onChange(of: sidebarSelection) { _, newValue in
+            guard viewModel.selectedWorkspace != newValue else { return }
+            viewModel.selectedWorkspace = newValue
+        }
+        .onChange(of: viewModel.selectedWorkspace, initial: true) { _, newValue in
+            guard sidebarSelection != newValue else { return }
+            sidebarSelection = newValue
         }
     }
 
@@ -40,19 +58,18 @@ struct WorkspaceListView: View {
             if viewModel.isLoadingWorkspaces {
                 ProgressView()
             } else {
-                List(selection: $viewModel.selectedWorkspace) {
+                List(selection: $sidebarSelection) {
                     ForEach(viewModel.workspaces) { workspace in
-                        WorkspaceRow(workspace: workspace, isOpening: viewModel.openingWorkspaceId == workspace.id)
+                        WorkspaceRow(workspace: workspace, title: workspace.name, isOpening: viewModel.openingWorkspaceId == workspace.id)
                         .tag(workspace)
                         .disabled(viewModel.isBusy)
-                        .destructiveRowAction {
+                        .destructiveRowAction(editTitle: "Đổi tên", onEdit: { beginRename(workspace) }) {
                             workspacePendingDeletion = workspace
                         }
                     }
 
                     if let message = viewModel.errorMessage {
-                        Label(message, systemImage: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.red)
+                        ErrorLabel(message: message)
                     }
                 }
                 .overlay {
@@ -60,7 +77,7 @@ struct WorkspaceListView: View {
                         ContentUnavailableView(
                             "Chưa có workspace",
                             systemImage: "tray",
-                            description: Text("Bấm \"Workspace mới\" để tạo sổ chi tiêu cá nhân hoặc gia đình.")
+                            description: Text("Bấm \"Workspace mới\" để tạo sổ chi tiêu đầu tiên.")
                         )
                     }
                 }
@@ -97,24 +114,34 @@ struct WorkspaceListView: View {
         .confirmationDialog("Tạo workspace mới", isPresented: $isShowingCreatePicker, titleVisibility: .visible) {
             ForEach(viewModel.availableTypesToCreate, id: \.self) { type in
                 Button(type.displayName) {
-                    Task { await viewModel.createWorkspace(type) }
+                    beginNaming(type)
                 }
             }
         }
+        .alert("Workspace mới", isPresented: Binding(isPresent: $namingType), presenting: namingType) { type in
+            TextField(viewModel.suggestedName(for: type), text: $newWorkspaceName)
+            Button("Tạo") {
+                Task { await viewModel.createWorkspace(type, name: newWorkspaceName) }
+            }
+            Button("Huỷ", role: .cancel) {}
+        } message: { _ in
+            Text("Đặt tên để dễ phân biệt, vd \"Chi tiêu tháng\", \"Du lịch\". Đổi lại được sau.")
+        }
+        .alert("Đổi tên workspace", isPresented: Binding(isPresent: $renamingWorkspace), presenting: renamingWorkspace) { workspace in
+            TextField("Tên workspace", text: $renameText)
+            Button("Lưu") {
+                Task { await viewModel.renameWorkspace(workspace, to: renameText) }
+            }
+            Button("Huỷ", role: .cancel) {}
+        } message: { _ in
+            Text("Tên file trên Google Drive cũng được đổi theo.")
+        }
         .confirmationDialog(
-            "Xoá \(workspacePendingDeletion?.displayName ?? "")?",
-            isPresented: Binding(
-                get: { workspacePendingDeletion != nil },
-                set: { isPresented in if !isPresented { workspacePendingDeletion = nil } }
-            ),
+            "Xoá \(workspacePendingDeletion.map(viewModel.displayName(of:)) ?? "")?",
+            isPresented: Binding(isPresent: $workspacePendingDeletion),
             titleVisibility: .visible
         ) {
-            Button("Xoá", role: .destructive) {
-                if let workspace = workspacePendingDeletion {
-                    Task { await viewModel.deleteWorkspace(workspace) }
-                }
-                workspacePendingDeletion = nil
-            }
+            Button("Xoá", role: .destructive, action: confirmDeletion)
             Button("Huỷ", role: .cancel) {
                 workspacePendingDeletion = nil
             }
@@ -144,9 +171,7 @@ struct WorkspaceListView: View {
 
     private var createWorkspaceBar: some View {
         HStack {
-            Button {
-                isShowingCreatePicker = true
-            } label: {
+            Button(action: beginCreate) {
                 HStack(spacing: 6) {
                     if viewModel.isCreating {
                         ProgressView()
@@ -161,9 +186,16 @@ struct WorkspaceListView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
-            .disabled(viewModel.availableTypesToCreate.isEmpty || viewModel.isBusy)
+            .disabled(isCreateLimitReached || viewModel.isBusy)
 
             Spacer()
+
+            if isCreateLimitReached {
+                Text("Tối đa \(WorkspaceStore.maxInstancesPerType)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .help("Xoá bớt 1 workspace để tạo mới")
+            }
         }
         .padding(.horizontal)
         .padding(.vertical, 10)
@@ -173,16 +205,46 @@ struct WorkspaceListView: View {
         }
     }
 
+    private var isCreateLimitReached: Bool {
+        viewModel.availableTypesToCreate.isEmpty
+    }
+
+    /// Chỉ có 1 loại tạo được thì vào thẳng bước đặt tên, khỏi hỏi chọn loại.
+    private func beginCreate() {
+        let types = viewModel.availableTypesToCreate
+        guard types.count > 1 else {
+            types.first.map(beginNaming)
+            return
+        }
+        isShowingCreatePicker = true
+    }
+
+    /// Điền sẵn tên gợi ý — bấm Tạo luôn cũng được.
+    private func beginNaming(_ type: WorkspaceType) {
+        newWorkspaceName = viewModel.suggestedName(for: type)
+        namingType = type
+    }
+
+    private func beginRename(_ workspace: WorkspaceListViewModel.Workspace) {
+        renameText = viewModel.displayName(of: workspace)
+        renamingWorkspace = workspace
+    }
+
+    private func confirmDeletion() {
+        defer { workspacePendingDeletion = nil }
+        guard let workspace = workspacePendingDeletion else { return }
+        Task { await viewModel.deleteWorkspace(workspace) }
+    }
+
     @ViewBuilder
     private var detail: some View {
         if let session = viewModel.activeSession {
-            // .id() bắt buộc — không có thì @StateObject bên trong
-            // ExpenseListView giữ nguyên theo identity view cũ khi đổi
-            // workspace, vẫn hiện danh sách của spreadsheetId trước đó.
+            // .id() bắt buộc — không có thì @StateObject bên trong giữ dữ liệu workspace cũ.
             ExpenseListView(
                 spreadsheetId: session.spreadsheetId,
                 spreadsheetURL: session.spreadsheetURL,
                 workspaceType: session.workspaceType,
+                workspaceTitle: viewModel.selectedWorkspace.map(viewModel.displayName(of:)) ?? session.workspaceType.displayName,
                 userDisplayName: userDisplayName,
                 userEmail: userEmail
             )
@@ -202,15 +264,17 @@ struct WorkspaceListView: View {
 
 private struct WorkspaceRow: View {
     let workspace: WorkspaceListViewModel.Workspace
+    /// Tách riêng vì `Workspace` so sánh theo id — đổi tên mà không tách thì hàng có thể không vẽ lại.
+    let title: String
     let isOpening: Bool
 
     var body: some View {
         HStack(spacing: 12) {
             IconBadge(systemName: workspace.type.icon, color: workspace.type.color)
             VStack(alignment: .leading, spacing: 2) {
-                Text(workspace.displayName)
+                Text(title)
                     .font(.body.weight(.medium))
-                Text(workspace.type == .family ? "Chia tiền nhiều người" : "Chi tiêu của riêng bạn")
+                Text(workspace.type == .family ? "Chia tiền nhóm" : "Chi tiêu riêng")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

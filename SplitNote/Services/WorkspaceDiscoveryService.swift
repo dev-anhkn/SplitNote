@@ -5,14 +5,8 @@
 
 import Foundation
 
-/// Reconciles `WorkspaceStore`'s local cache of spreadsheet IDs against what
-/// actually exists on Google Drive — drops entries for files deleted
-/// elsewhere, and recovers any tagged spreadsheet a fresh install or another
-/// device created that the local cache doesn't know about yet.
+/// Đối chiếu cache id spreadsheet với Drive: bỏ file đã xoá, tìm bù file được tag từ thiết bị khác.
 struct WorkspaceDiscoveryService {
-    /// The Drive `appProperties` key tagging a workspace's spreadsheet.
-    static let workspaceTypePropertyKey = "splitnote_workspace_type"
-
     private let driveService: DriveServiceProtocol
     private let store: WorkspaceStore
 
@@ -21,8 +15,9 @@ struct WorkspaceDiscoveryService {
         self.store = store
     }
 
-    /// Drops any cached slot whose spreadsheet no longer exists on Drive.
+    /// Bỏ các slot cache mà spreadsheet không còn trên Drive.
     func pruneDeletedWorkspaces() async {
+        // 1. Gom các slot đang có id.
         let cachedSlots = WorkspaceType.allCases.flatMap { type in
             (0..<WorkspaceStore.maxInstancesPerType).compactMap { index -> (WorkspaceType, Int, String)? in
                 store.spreadsheetId(for: type, at: index).map { (type, index, $0) }
@@ -30,7 +25,7 @@ struct WorkspaceDiscoveryService {
         }
         guard !cachedSlots.isEmpty else { return }
 
-        // Kiểm tra Drive song song thay vì tuần tự từng slot.
+        // 2. Hỏi Drive song song; lỗi mạng thì coi như vẫn còn để không xoá nhầm.
         await withTaskGroup(of: (WorkspaceType, Int, Bool).self) { group in
             for (type, index, id) in cachedSlots {
                 group.addTask { [driveService] in
@@ -38,17 +33,16 @@ struct WorkspaceDiscoveryService {
                     return (type, index, stillExists)
                 }
             }
+            // 3. Xoá cache các slot không còn.
             for await (type, index, stillExists) in group where !stillExists {
                 store.clearSpreadsheetId(for: type, at: index)
             }
         }
     }
 
-    /// Fills any empty slot whose spreadsheet is found tagged on Drive.
-    /// Returns an error message if a Drive lookup failed — surfaced, not
-    /// swallowed, so a permission/auth error doesn't look identical to
-    /// "nothing found".
+    /// Điền slot trống bằng spreadsheet tìm thấy trên Drive; trả về lỗi để không lẫn với "không tìm thấy".
     func discoverMissingWorkspaces() async -> String? {
+        // 1. Gom các slot còn trống.
         let missingSlots = WorkspaceType.allCases
             .filter(\.isAvailable)
             .flatMap { type in
@@ -59,8 +53,7 @@ struct WorkspaceDiscoveryService {
         guard !missingSlots.isEmpty else { return nil }
 
         var errorMessage: String?
-        // Hỏi Drive song song cho mọi slot còn trống, thay vì tuần tự — mỗi
-        // slot là 1 request độc lập nên không cần chờ nhau.
+        // 2. Hỏi Drive song song cho từng slot — mỗi slot là 1 request độc lập.
         await withTaskGroup(of: (WorkspaceType, Int, Result<String?, Error>).self) { group in
             for (type, index) in missingSlots {
                 group.addTask { [driveService] in
@@ -71,12 +64,13 @@ struct WorkspaceDiscoveryService {
                     }
                 }
             }
+            // 3. Lưu id tìm được, ghi nhận lỗi nếu có.
             for await (type, index, result) in group {
                 switch result {
-                case .success(let foundId):
-                    if let foundId {
-                        store.setSpreadsheetId(foundId, for: type, at: index)
-                    }
+                case .success(let foundId?):
+                    store.setSpreadsheetId(foundId, for: type, at: index)
+                case .success(nil):
+                    break
                 case .failure(let error):
                     errorMessage = "Không thể tìm sheet trên Google Drive: \(error.localizedDescription)"
                 }
@@ -85,9 +79,7 @@ struct WorkspaceDiscoveryService {
         return errorMessage
     }
 
-    /// Re-searches Drive for one slot's tagged spreadsheet — used to self-heal
-    /// a stale cached id (e.g. the old file was trashed/recreated outside the
-    /// app) right when opening it fails, instead of requiring a full sign-out.
+    /// Tìm lại spreadsheet của 1 slot khi id cache mở lỗi — tự sửa thay vì bắt đăng xuất.
     func rediscoverWorkspace(type: WorkspaceType, index: Int) async throws -> String? {
         try await Self.findTaggedFile(driveService: driveService, type: type, index: index)
     }
@@ -96,14 +88,12 @@ struct WorkspaceDiscoveryService {
         "\(type.rawValue)_\(index)"
     }
 
-    /// Slot 0 may still carry the pre-multi-slot Drive tag (no "_index"
-    /// suffix) from before this feature — fall back to it so old workspaces
-    /// tagged that way are still found on a fresh device.
+    /// Slot 0 có thể còn tag kiểu cũ (không có "_index") — thử thêm tag đó để vẫn tìm thấy.
     private static func findTaggedFile(driveService: DriveServiceProtocol, type: WorkspaceType, index: Int) async throws -> String? {
-        if let id = try await driveService.findFile(key: workspaceTypePropertyKey, value: tagValue(type: type, index: index)) {
+        if let id = try await driveService.findFile(key: StorageKeys.driveWorkspaceTag, value: tagValue(type: type, index: index)) {
             return id
         }
         guard index == 0 else { return nil }
-        return try await driveService.findFile(key: workspaceTypePropertyKey, value: type.rawValue)
+        return try await driveService.findFile(key: StorageKeys.driveWorkspaceTag, value: type.rawValue)
     }
 }

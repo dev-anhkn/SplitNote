@@ -5,55 +5,49 @@
 
 import Foundation
 
-/// Persists the spreadsheet IDs created for each workspace type, up to
-/// `maxInstancesPerType` slots each (e.g. "Cá nhân 1", "Cá nhân 2", ...), so
-/// re-launching the app reuses the same Google Sheets instead of creating
-/// new ones every time.
+/// Lưu id spreadsheet của từng slot workspace để mở lại app không tạo sheet mới.
 nonisolated struct WorkspaceStore {
+    /// Số workspace tối đa mỗi loại (vd "Cá nhân 1" tới "Cá nhân 3").
     static let maxInstancesPerType = 3
-    
+
     private let defaults: UserDefaults
-    
+
     nonisolated init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
     }
-    
+
     func spreadsheetId(for type: WorkspaceType, at index: Int) -> String? {
-        if let value = defaults.string(forKey: key(for: type, index: index)) {
+        if let value = defaults.string(forKey: StorageKeys.spreadsheetId(type: type, index: index)) {
             return value
         }
-        // Trước khi hỗ trợ nhiều slot/type, key không có index — chỉ slot 0
-        // có thể còn dữ liệu ở key cũ. Di chuyển sang key mới rồi trả về.
-        guard index == 0, let legacyValue = defaults.string(forKey: legacyKey(for: type)) else {
+        // Bản cũ lưu key không có index — chỉ slot 0 có thể còn, chuyển sang key mới.
+        guard index == 0, let legacyValue = defaults.string(forKey: StorageKeys.legacySpreadsheetId(type: type)) else {
             return nil
         }
         setSpreadsheetId(legacyValue, for: type, at: index)
-        defaults.removeObject(forKey: legacyKey(for: type))
+        defaults.removeObject(forKey: StorageKeys.legacySpreadsheetId(type: type))
         return legacyValue
     }
-    
+
     func setSpreadsheetId(_ id: String, for type: WorkspaceType, at index: Int) {
-        defaults.set(id, forKey: key(for: type, index: index))
-    }
-    
-    func clearSpreadsheetId(for type: WorkspaceType, at index: Int) {
-        defaults.removeObject(forKey: key(for: type, index: index))
-    }
-    
-    /// The first empty slot for `type`, or nil once all
-    /// `maxInstancesPerType` slots are filled.
-    func nextAvailableIndex(for type: WorkspaceType) -> Int? {
-        for index in 0..<Self.maxInstancesPerType where spreadsheetId(for: type, at: index) == nil {
-            return index
-        }
-        return nil
-    }
-    
-    private func key(for type: WorkspaceType, index: Int) -> String {
-        "SplitNote.spreadsheetId.\(type.rawValue).\(index)"
+        defaults.set(id, forKey: StorageKeys.spreadsheetId(type: type, index: index))
     }
 
-    private func legacyKey(for type: WorkspaceType) -> String {
-        "SplitNote.spreadsheetId.\(type.rawValue)"
+    func clearSpreadsheetId(for type: WorkspaceType, at index: Int) {
+        defaults.removeObject(forKey: StorageKeys.spreadsheetId(type: type, index: index))
+        defaults.removeObject(forKey: StorageKeys.workspaceName(type: type, index: index))
+    }
+
+    func name(for type: WorkspaceType, at index: Int) -> String? {
+        defaults.string(forKey: StorageKeys.workspaceName(type: type, index: index))
+    }
+
+    func setName(_ name: String, for type: WorkspaceType, at index: Int) {
+        defaults.set(name, forKey: StorageKeys.workspaceName(type: type, index: index))
+    }
+
+    /// Slot trống đầu tiên của `type`, nil khi đã đầy.
+    func nextAvailableIndex(for type: WorkspaceType) -> Int? {
+        (0..<Self.maxInstancesPerType).first { spreadsheetId(for: type, at: $0) == nil }
     }
 }

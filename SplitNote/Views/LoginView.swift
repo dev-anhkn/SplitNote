@@ -22,80 +22,170 @@ struct LoginView: View {
     }
 
     private var signInPrompt: some View {
-        VStack(spacing: 28) {
-            Spacer()
-            appHeader
-            featureCard
-            Spacer()
-            signInSection
+        Group {
+            #if os(macOS)
+            macLayout
+            #else
+            iOSLayout
+            #endif
         }
-        .padding(.horizontal, 28)
-        .padding(.bottom, 24)
-        .frame(maxWidth: 480)
-        .frame(maxWidth: .infinity)
+        .background(AppBackground())
     }
 
+    // MARK: - Layouts
+
+    /// macOS: theo Figma — nút đăng nhập ngay dưới header, cả khối căn giữa cửa sổ.
+    private var macLayout: some View {
+        VStack(spacing: 28) {
+            appHeader
+            signInSection
+            featureList
+            privacyFooter
+        }
+        .padding(40)
+        .frame(maxWidth: LoginMetrics.contentMaxWidth)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// iOS: nút ghim ở đáy cho vùng ngón cái; nội dung cuộn được khi Dynamic Type lớn hoặc màn nhỏ.
+    private var iOSLayout: some View {
+        ScrollView {
+            VStack(spacing: 36) {
+                appHeader
+                featureList
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 32)
+            .frame(maxWidth: LoginMetrics.contentMaxWidth)
+            .frame(maxWidth: .infinity)
+        }
+        .defaultScrollAnchor(.center, for: .alignment)
+        .scrollBounceBehavior(.basedOnSize)
+        .safeAreaBar(edge: .bottom) {
+            VStack(spacing: 16) {
+                signInSection
+                privacyFooter
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 12)
+            .padding(.bottom, 8)
+            .frame(maxWidth: LoginMetrics.contentMaxWidth)
+        }
+    }
+
+    // MARK: - Sections
+
     private var appHeader: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: 20) {
             // Quầng sáng mờ sau icon cho màn chào bớt trống.
             ZStack {
                 Circle()
-                    .fill(Color.accentColor.opacity(0.18))
-                    .frame(width: 130, height: 130)
-                    .blur(radius: 18)
-                IconBadge(systemName: "square.split.2x1.fill", color: .accentColor, size: 84)
-                    .shadow(color: .black.opacity(0.15), radius: 8, y: 4)
+                    .fill(AppStyle.gold.opacity(0.25))
+                    .frame(width: LoginMetrics.logoSize * 1.5, height: LoginMetrics.logoSize * 1.5)
+                    .blur(radius: 20)
+                // Dùng chính icon app để màn chào và Dock/Home Screen khớp nhau.
+                Image("AppLogo")
+                    .resizable()
+                    .frame(width: LoginMetrics.logoSize, height: LoginMetrics.logoSize)
             }
 
-            VStack(spacing: 6) {
-                Text("SplitNote")
-                    .font(.system(size: 34, weight: .bold, design: .rounded))
-                Text("Ghi chi tiêu và chia tiền chỉ bằng một dòng chữ")
-                    .font(.subheadline)
+            VStack(spacing: 12) {
+                Text("Chào mừng đến SplitNote")
+                    .font(LoginMetrics.titleFont)
+                Text("Ghi chi tiêu và chia tiền gia đình, đơn giản như ghi chú.")
+                    .font(LoginMetrics.subtitleFont)
                     .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
             }
+            .multilineTextAlignment(.center)
         }
     }
 
-    private var featureCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            FeatureRow(icon: "text.cursor", color: .blue, title: "Nhập nhanh", detail: "Gõ số tiền và nội dung, SplitNote tự phân loại.")
-            FeatureRow(icon: "person.2.fill", color: .orange, title: "Chia cho gia đình", detail: "Ghi ai chi, chia cho ai trong cùng một sheet.")
-            FeatureRow(icon: "tablecells.fill", color: .green, title: "Lưu trên Google Sheets", detail: "Dữ liệu nằm trong Drive của bạn.")
+    private var featureList: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            FeatureRow(icon: "bolt", color: AppStyle.gold, title: "Nhập nhanh", detail: "Ghi chi tiêu, chia theo người chỉ trong vài giây.")
+            FeatureRow(icon: "person.2", color: AppStyle.indigo, title: "Chia cho gia đình", detail: "Rõ ai chi, chia cho ai trong cùng một nhóm.")
+            FeatureRow(icon: "tablecells", color: .green, title: "Lưu trên Google Sheets", detail: "Dễ xem, xuất và kiểm tra ngay trong bảng tính.")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .cardStyle()
     }
 
     private var signInSection: some View {
         VStack(spacing: 12) {
-            Button {
+            GoogleSignInButton(isLoading: viewModel.isSigningIn) {
                 Task { await viewModel.signIn() }
-            } label: {
-                HStack(spacing: 10) {
-                    if viewModel.isSigningIn {
-                        ProgressView()
-                    } else {
-                        Text("G")
-                            .font(.system(size: 17, weight: .bold, design: .rounded))
-                    }
-                    Text("Đăng nhập với Google")
-                        .font(.headline)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 6)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .disabled(viewModel.isSigningIn)
 
             if let message = viewModel.signInErrorMessage {
-                Label(message, systemImage: "exclamationmark.triangle.fill")
+                ErrorLabel(message: message)
                     .font(.footnote)
-                    .foregroundStyle(.red)
             }
         }
+    }
+
+    private var privacyFooter: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Divider()
+            Label {
+                Text("Dữ liệu trên Google Drive của bạn. SplitNote không có máy chủ riêng.")
+            } icon: {
+                Image(systemName: "lock")
+                    .foregroundStyle(.green)
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// Kích thước khác nhau theo nền tảng: macOS dùng cỡ cố định, iOS theo Dynamic Type.
+private enum LoginMetrics {
+    static let contentMaxWidth: CGFloat = 480
+    #if os(macOS)
+    static let logoSize: CGFloat = 80
+    static let featureIconSize: CGFloat = 52
+    static let titleFont: Font = .system(size: 36, weight: .bold)
+    static let subtitleFont: Font = .title3
+    #else
+    static let logoSize: CGFloat = 72
+    static let featureIconSize: CGFloat = 48
+    static let titleFont: Font = .largeTitle.bold()
+    static let subtitleFont: Font = .body
+    #endif
+}
+
+/// Theo hướng dẫn thương hiệu của Google: logo "G" chính thức, nền trắng/tối trung tính, viền xám.
+private struct GoogleSignInButton: View {
+    let isLoading: Bool
+    let action: () -> Void
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var isDark: Bool { colorScheme == .dark }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                if isLoading {
+                    ProgressView()
+                        .controlSize(.small)
+                        .frame(width: 20, height: 20)
+                } else {
+                    Image("GoogleG")
+                        .resizable()
+                        .frame(width: 20, height: 20)
+                }
+                Text("Đăng nhập với Google")
+                    .font(.system(size: 15, weight: .medium))
+            }
+            .foregroundStyle(isDark ? Color(white: 0.89) : Color(white: 0.12))
+            .frame(maxWidth: .infinity)
+            .frame(height: 52)
+            .background(isDark ? Color(red: 0.075, green: 0.075, blue: 0.078) : .white, in: Capsule())
+            .overlay(Capsule().stroke(isDark ? Color(white: 0.56) : Color(white: 0.46), lineWidth: 1))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(isLoading)
     }
 }
 
@@ -106,14 +196,15 @@ private struct FeatureRow: View {
     let detail: String
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            IconBadge(systemName: icon, color: color, size: 30)
-            VStack(alignment: .leading, spacing: 2) {
+        HStack(spacing: 16) {
+            IconBadge(systemName: icon, color: color, size: LoginMetrics.featureIconSize)
+            VStack(alignment: .leading, spacing: 4) {
                 Text(title)
-                    .font(.subheadline.weight(.semibold))
+                    .font(.headline)
                 Text(detail)
-                    .font(.footnote)
+                    .font(.subheadline)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }

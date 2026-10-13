@@ -12,8 +12,7 @@ import AppKit
 #endif
 
 protocol AuthServiceProtocol {
-    /// Restores a session from a previous launch, if one exists. Never throws —
-    /// "no saved session" and "restore failed" both just mean "signed out".
+    /// Khôi phục phiên trước nếu có; không ném lỗi — thất bại cũng coi như chưa đăng nhập.
     func restorePreviousSignIn() async -> AppUser?
     func signIn() async throws -> AppUser
     func signOut()
@@ -22,36 +21,29 @@ protocol AuthServiceProtocol {
 enum AuthServiceError: Error, LocalizedError {
     case noPresentingSurface
     case missingProfile
-    
+
     var errorDescription: String? {
         switch self {
         case .noPresentingSurface:
-            return "No window is available to present the Google sign-in screen."
+            return "Không có cửa sổ nào để hiện màn đăng nhập Google."
         case .missingProfile:
-            return "Google did not return a user profile."
+            return "Google không trả về thông tin tài khoản."
         }
     }
 }
 
-/// Wraps the GoogleSignIn SDK (which uses completion handlers, not async/await)
-/// behind an async `AuthServiceProtocol`. Presenting the sign-in screen differs
-/// by platform: iOS needs a `UIViewController`, macOS needs an `NSWindow`.
+/// Bọc GoogleSignIn SDK (completion handler) thành async; iOS cần `UIViewController`, macOS cần `NSWindow`.
 struct GoogleAuthService: AuthServiceProtocol {
-    
-    /// Requested in addition to the default profile scopes so the signed-in
-    /// user's token can also call the Sheets API (see `SheetsService`).
-    static let sheetsScope = "https://www.googleapis.com/auth/spreadsheets"
-    /// Narrow Drive scope — only sees files this app creates or opens itself
-    /// — used to tag/find workspace spreadsheets (see `DriveService`).
-    static let driveFileScope = "https://www.googleapis.com/auth/drive.file"
-    /// Read-only metadata across ALL files the account can access (owned +
-    /// shared), unlike `driveFileScope`. Needed so `WorkspaceDiscoveryService`
-    /// can find a workspace shared with this account via `appProperties`,
-    /// even though this account's own `drive.file` grant never touched it.
-    static let driveMetadataReadonlyScope = "https://www.googleapis.com/auth/drive.metadata.readonly"
-    
+    /// Sheets đọc/ghi, Drive file do app tạo, metadata mọi file (để tìm workspace được chia sẻ).
+    private static let additionalScopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive.file",
+        "https://www.googleapis.com/auth/drive.metadata.readonly"
+    ]
+
+
     nonisolated init() {}
-    
+
     func restorePreviousSignIn() async -> AppUser? {
         await withCheckedContinuation { continuation in
             GIDSignIn.sharedInstance.restorePreviousSignIn { user, _ in
@@ -59,7 +51,7 @@ struct GoogleAuthService: AuthServiceProtocol {
             }
         }
     }
-    
+
     func signIn() async throws -> AppUser {
         // 1. Mở màn đăng nhập Google, xin đủ quyền Sheets + Drive.
         let googleUser = try await performSignIn()
@@ -69,66 +61,51 @@ struct GoogleAuthService: AuthServiceProtocol {
         }
         return appUser
     }
-    
+
     func signOut() {
         GIDSignIn.sharedInstance.signOut()
     }
-    
+
     private func performSignIn() async throws -> GIDGoogleUser {
-        // 1. Tìm màn hình/cửa sổ để hiện UI đăng nhập (khác nhau giữa iOS/macOS).
-        // 2. Gọi SDK đăng nhập, xin thêm quyền Sheets + Drive.
         try await withCheckedThrowingContinuation { continuation in
-#if os(iOS)
-            guard let presentingViewController = Self.rootViewController else {
+            // 1. Tìm màn hình/cửa sổ để hiện UI đăng nhập.
+            guard let presenter = Self.presenter else {
                 continuation.resume(throwing: AuthServiceError.noPresentingSurface)
                 return
             }
-            GIDSignIn.sharedInstance.signIn(
-                withPresenting: presentingViewController,
-                hint: nil,
-                additionalScopes: [Self.sheetsScope, Self.driveFileScope, Self.driveMetadataReadonlyScope]
-            ) { result, error in
+            // 2. Gọi SDK đăng nhập, xin thêm quyền Sheets + Drive.
+            GIDSignIn.sharedInstance.signIn(withPresenting: presenter, hint: nil, additionalScopes: Self.additionalScopes) { result, error in
                 Self.resume(continuation, result: result, error: error)
             }
-#elseif os(macOS)
-            guard let presentingWindow = NSApplication.shared.keyWindow ?? NSApplication.shared.windows.first else {
-                continuation.resume(throwing: AuthServiceError.noPresentingSurface)
-                return
-            }
-            GIDSignIn.sharedInstance.signIn(
-                withPresenting: presentingWindow,
-                hint: nil,
-                additionalScopes: [Self.sheetsScope, Self.driveFileScope, Self.driveMetadataReadonlyScope]
-            ) { result, error in
-                Self.resume(continuation, result: result, error: error)
-            }
-#endif
         }
     }
-    
+
     private static func resume(
         _ continuation: CheckedContinuation<GIDGoogleUser, Error>,
         result: GIDSignInResult?,
         error: Error?
     ) {
-        if let error {
-            continuation.resume(throwing: error)
-        } else if let user = result?.user {
-            continuation.resume(returning: user)
-        } else {
-            continuation.resume(throwing: AuthServiceError.missingProfile)
+        guard let user = result?.user, error == nil else {
+            continuation.resume(throwing: error ?? AuthServiceError.missingProfile)
+            return
         }
+        continuation.resume(returning: user)
     }
-    
+
 #if os(iOS)
-    private static var rootViewController: UIViewController? {
+    /// View controller gốc của cửa sổ đang active.
+    private static var presenter: UIViewController? {
         UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
             .first { $0.activationState == .foregroundActive }?
             .windows.first(where: \.isKeyWindow)?
             .rootViewController
     }
-#endif // os(iOS)
+#elseif os(macOS)
+    private static var presenter: NSWindow? {
+        NSApplication.shared.keyWindow ?? NSApplication.shared.windows.first
+    }
+#endif
 }
 
 private extension AppUser {

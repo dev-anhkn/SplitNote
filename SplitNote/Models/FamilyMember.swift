@@ -5,10 +5,7 @@
 
 import Foundation
 
-/// One member of a `.family` workspace. `name` is what "Ai chi"/"Chi cho ai"
-/// and the balance table actually use; `email`, if set, is who Drive access
-/// was granted to — kept separate so renaming `name` never re-triggers a
-/// share/revoke or changes which Google account can open the sheet.
+/// Thành viên workspace gia đình; tách `email` (quyền Drive) khỏi `name` để đổi tên không đụng tới quyền.
 struct FamilyMember: Identifiable, Hashable {
     let id: UUID
     var name: String

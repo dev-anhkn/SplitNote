@@ -5,177 +5,76 @@
 
 import Foundation
 
-/// CRUD over one month tab's expense rows (A:D) plus the paired family
-/// columns (H:J) for a `.family` workspace.
+/// Thêm/đọc/sửa/xoá khoản chi trong 1 tab tháng (A:D) và cột gia đình đi kèm (H:J).
 struct SheetsRowService {
     nonisolated init() {}
 
     func appendRow(spreadsheetId: String, tabTitle: String, date: String, category: String, content: String, amount: String, paidBy: String?, sharedWith: String?) async throws {
         let accessToken = try await GoogleAPIAuth.currentAccessToken()
-        guard let encodedTitle = SheetsHTTP.percentEncodedTabTitle(tabTitle) else {
-            throw SheetsServiceError.invalidResponse
-        }
-        // Ghi thẳng vào hàng trống tiếp theo thay vì values.append: append tự
-        // dò "cuối bảng" và có thể ghi đè lên hàng deleteRow để trống ở giữa,
-        // làm lệch thứ tự các khoản chi còn lại.
-        let targetRow = try await nextRowIndex(spreadsheetId: spreadsheetId, encodedTitle: encodedTitle, accessToken: accessToken)
-        guard let url = URL(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetId)/values/'\(encodedTitle)'!A\(targetRow):D\(targetRow)?valueInputOption=USER_ENTERED") else {
-            throw SheetsServiceError.invalidResponse
-        }
-        var request = URLRequest(url: url)
-        request.httpMethod = "PUT"
-        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: [
-            "values": [[date, category, content, amount]]
-        ])
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        try SheetsHTTP.validate(response, data: data)
-
-        if let paidBy, let sharedWith {
-            try await writeFamilyRow(spreadsheetId: spreadsheetId, encodedTitle: encodedTitle, row: targetRow, paidBy: paidBy, sharedWith: sharedWith, accessToken: accessToken)
-        }
+        // 1. Tìm hàng trống kế tiếp — không dùng values.append vì nó có thể ghi đè hàng đã xoá trắng ở giữa.
+        let row = try await nextRowIndex(spreadsheetId: spreadsheetId, tabTitle: tabTitle, accessToken: accessToken)
+        // 2. Ghi A:D.
+        try await SheetsHTTP.writeValues(spreadsheetId: spreadsheetId, tabTitle: tabTitle, range: "A\(row):D\(row)", values: [[date, category, content, amount]], accessToken: accessToken)
+        // 3. Workspace gia đình thì ghi thêm H:J.
+        guard let paidBy, let sharedWith else { return }
+        try await writeFamilyRow(spreadsheetId: spreadsheetId, tabTitle: tabTitle, row: row, paidBy: paidBy, sharedWith: sharedWith, accessToken: accessToken)
     }
 
-    /// Dùng render option mặc định (`FORMATTED_VALUE`) để cột ngày trả về
-    /// đúng như hiển thị, khỏi phải tự quy đổi số serial ngày của Sheets.
+    /// Đọc dạng `FORMATTED_VALUE` (mặc định) để ô ngày trả về đúng như hiển thị, khỏi đổi số serial.
     func fetchRows(spreadsheetId: String, tabTitle: String) async throws -> [ExpenseEntry] {
         let accessToken = try await GoogleAPIAuth.currentAccessToken()
-        guard let encodedTitle = SheetsHTTP.percentEncodedTabTitle(tabTitle) else {
-            throw SheetsServiceError.invalidResponse
-        }
-        guard let url = URL(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetId)/values/'\(encodedTitle)'!A2:J10000") else {
-            throw SheetsServiceError.invalidResponse
-        }
-        var request = URLRequest(url: url)
-        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        try SheetsHTTP.validate(response, data: data)
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw SheetsServiceError.invalidResponse
-        }
-
-        // Hàng 2 là hàng dữ liệu đầu tiên; bỏ qua hàng không có số tiền hợp lệ.
-        // Đọc rộng tới J để lấy luôn Ai chi (H)/Chi cho ai (I) — E/F/G (spacer,
-        // Tổng cộng, spacer) nằm giữa nhưng không được dùng tới.
-        let rows = json["values"] as? [[String]] ?? []
+        // Đọc tới J để lấy luôn Ai chi (H)/Chi cho ai (I).
+        let rows = try await SheetsHTTP.readValues(spreadsheetId: spreadsheetId, tabTitle: tabTitle, range: "A2:J\(SheetsLayout.maxDataRow)", accessToken: accessToken)
         return rows.enumerated().compactMap { offset, row in
-            // VNĐ không thập phân — giữ lại số/dấu trừ, đọc được cả
-            // "300000" lẫn "300,000"/"300.000".
-            guard row.indices.contains(3) else { return nil }
-            let amountDigits = row[3].filter { $0.isNumber || $0 == "-" }
-            guard let amount = Decimal(string: amountDigits) else { return nil }
-            return ExpenseEntry(
-                rowIndex: offset + 2,
-                date: row[0],
-                category: row.indices.contains(1) ? row[1] : "",
-                content: row.indices.contains(2) ? row[2] : "",
-                amount: amount,
-                paidBy: row.indices.contains(7) ? row[7] : "",
-                sharedWith: row.indices.contains(8) ? row[8] : ""
-            )
+            Self.entry(from: row, rowIndex: offset + 2)
         }
     }
 
-    /// Ghi thẳng B:D của `rowIndex` bằng `values.update` — không đụng Ngày.
-    func updateRow(spreadsheetId: String, tabTitle: String, rowIndex: Int, category: String, content: String, amount: String, paidBy: String?, sharedWith: String?) async throws {
+    /// `date` nil thì chỉ ghi B:D, không đụng ô Ngày.
+    func updateRow(spreadsheetId: String, tabTitle: String, rowIndex: Int, date: String?, category: String, content: String, amount: String, paidBy: String?, sharedWith: String?) async throws {
         let accessToken = try await GoogleAPIAuth.currentAccessToken()
-        guard let encodedTitle = SheetsHTTP.percentEncodedTabTitle(tabTitle) else {
-            throw SheetsServiceError.invalidResponse
-        }
-        guard let url = URL(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetId)/values/'\(encodedTitle)'!B\(rowIndex):D\(rowIndex)?valueInputOption=USER_ENTERED") else {
-            throw SheetsServiceError.invalidResponse
-        }
-        var request = URLRequest(url: url)
-        request.httpMethod = "PUT"
-        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: [
-            "values": [[category, content, amount]]
-        ])
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        try SheetsHTTP.validate(response, data: data)
-
-        if let paidBy, let sharedWith {
-            try await writeFamilyRow(spreadsheetId: spreadsheetId, encodedTitle: encodedTitle, row: rowIndex, paidBy: paidBy, sharedWith: sharedWith, accessToken: accessToken)
-        }
+        // 1. Ghi đè đúng hàng `rowIndex`.
+        let firstColumn = date == nil ? "B" : "A"
+        let values = [date, category, content, amount].compactMap { $0 }
+        try await SheetsHTTP.writeValues(spreadsheetId: spreadsheetId, tabTitle: tabTitle, range: "\(firstColumn)\(rowIndex):D\(rowIndex)", values: [values], accessToken: accessToken)
+        // 2. Workspace gia đình thì ghi lại H:J.
+        guard let paidBy, let sharedWith else { return }
+        try await writeFamilyRow(spreadsheetId: spreadsheetId, tabTitle: tabTitle, row: rowIndex, paidBy: paidBy, sharedWith: sharedWith, accessToken: accessToken)
     }
 
-    /// `values.clear` thay vì xoá hẳn hàng: xoá hẳn sẽ dịch chuyển các hàng
-    /// dưới, làm lệch `rowIndex` của các khoản chi khác và công thức Tổng cộng.
-    /// Để trống A:D thì `fetchRows` tự bỏ qua hàng đó.
+    /// Xoá trắng thay vì xoá hàng — xoá hàng sẽ dịch các hàng dưới, lệch `rowIndex` và công thức Tổng cộng.
     func deleteRow(spreadsheetId: String, tabTitle: String, rowIndex: Int) async throws {
         let accessToken = try await GoogleAPIAuth.currentAccessToken()
-        guard let encodedTitle = SheetsHTTP.percentEncodedTabTitle(tabTitle) else {
-            throw SheetsServiceError.invalidResponse
-        }
-        guard let url = URL(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetId)/values/'\(encodedTitle)'!A\(rowIndex):D\(rowIndex):clear") else {
-            throw SheetsServiceError.invalidResponse
-        }
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: [String: Any]())
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        try SheetsHTTP.validate(response, data: data)
-
-        // Xoá luôn H:J nếu tab này có cột gia đình — vô hại với tab cá nhân
-        // (không có gì ở đó để xoá).
-        guard let familyURL = URL(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetId)/values/'\(encodedTitle)'!H\(rowIndex):J\(rowIndex):clear") else {
-            throw SheetsServiceError.invalidResponse
-        }
-        var familyRequest = URLRequest(url: familyURL)
-        familyRequest.httpMethod = "POST"
-        familyRequest.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-        familyRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        familyRequest.httpBody = try JSONSerialization.data(withJSONObject: [String: Any]())
-        let (familyData, familyResponse) = try await URLSession.shared.data(for: familyRequest)
-        try SheetsHTTP.validate(familyResponse, data: familyData)
+        // 1. Xoá trắng A:D — `fetchRows` sẽ tự bỏ qua hàng này.
+        try await SheetsHTTP.clearValues(spreadsheetId: spreadsheetId, tabTitle: tabTitle, range: "A\(rowIndex):D\(rowIndex)", accessToken: accessToken)
+        // 2. Xoá luôn H:J — vô hại với tab cá nhân vì ở đó không có gì.
+        try await SheetsHTTP.clearValues(spreadsheetId: spreadsheetId, tabTitle: tabTitle, range: "H\(rowIndex):J\(rowIndex)", accessToken: accessToken)
     }
 
-    /// Writes H:J (Ai chi/Chi cho ai/Số người chia) for one row — shared by
-    /// `appendRow` and `updateRow`. `J` is always rewritten as a formula
-    /// referencing `I` on the same row, so it self-corrects if `sharedWith`
-    /// changes on an edit.
-    private func writeFamilyRow(spreadsheetId: String, encodedTitle: String, row: Int, paidBy: String, sharedWith: String, accessToken: String) async throws {
-        guard let url = URL(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetId)/values/'\(encodedTitle)'!H\(row):J\(row)?valueInputOption=USER_ENTERED") else {
-            throw SheetsServiceError.invalidResponse
-        }
-        var request = URLRequest(url: url)
-        request.httpMethod = "PUT"
-        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        // Đếm số tên trong "Chi cho ai" bằng số dấu phẩy + 1, thay vì lưu số
-        // cứng — sửa lại danh sách người chia thì số người chia tự cập nhật.
+    /// Ghi H:J của 1 hàng; J luôn là công thức đếm tên trong I nên tự đúng khi sửa người chia.
+    private func writeFamilyRow(spreadsheetId: String, tabTitle: String, row: Int, paidBy: String, sharedWith: String, accessToken: String) async throws {
         let countFormula = "=IF(I\(row)=\"\",0,LEN(I\(row))-LEN(SUBSTITUTE(I\(row),\",\",\"\"))+1)"
-        request.httpBody = try JSONSerialization.data(withJSONObject: [
-            "values": [[paidBy, sharedWith, countFormula]]
-        ])
-        let (data, response) = try await URLSession.shared.data(for: request)
-        try SheetsHTTP.validate(response, data: data)
+        try await SheetsHTTP.writeValues(spreadsheetId: spreadsheetId, tabTitle: tabTitle, range: "H\(row):J\(row)", values: [[paidBy, sharedWith, countFormula]], accessToken: accessToken)
     }
 
-    /// 1-based row right after the last row (from row 2) that still has data
-    /// in A:D — `deleteRow` blanks a row in place rather than removing it, so
-    /// a gap must be skipped over, not reused.
-    private func nextRowIndex(spreadsheetId: String, encodedTitle: String, accessToken: String) async throws -> Int {
-        guard let url = URL(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetId)/values/'\(encodedTitle)'!A2:D10000") else {
-            throw SheetsServiceError.invalidResponse
-        }
-        var request = URLRequest(url: url)
-        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-        let (data, response) = try await URLSession.shared.data(for: request)
-        try SheetsHTTP.validate(response, data: data)
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw SheetsServiceError.invalidResponse
-        }
-        let rows = json["values"] as? [[String]] ?? []
+    /// Hàng ngay sau hàng cuối còn dữ liệu ở A:D — bỏ qua chỗ trống do `deleteRow` để lại, không dùng lại.
+    private func nextRowIndex(spreadsheetId: String, tabTitle: String, accessToken: String) async throws -> Int {
+        let rows = try await SheetsHTTP.readValues(spreadsheetId: spreadsheetId, tabTitle: tabTitle, range: "A2:D\(SheetsLayout.maxDataRow)", accessToken: accessToken)
         let lastUsedRow = rows.lastIndex { !$0.allSatisfy(\.isEmpty) }.map { $0 + 2 } ?? 1
         return lastUsedRow + 1
+    }
+
+    /// Hàng không có số tiền hợp lệ (vd đã xoá trắng) thì bỏ qua.
+    private static func entry(from row: [String], rowIndex: Int) -> ExpenseEntry? {
+        guard let amount = SheetsHTTP.parseAmount(SheetsHTTP.cell(row, 3)) else { return nil }
+        return ExpenseEntry(
+            rowIndex: rowIndex,
+            date: SheetsHTTP.cell(row, 0),
+            category: SheetsHTTP.cell(row, 1),
+            content: SheetsHTTP.cell(row, 2),
+            amount: amount,
+            paidBy: SheetsHTTP.cell(row, 7),
+            sharedWith: SheetsHTTP.cell(row, 8)
+        )
     }
 }

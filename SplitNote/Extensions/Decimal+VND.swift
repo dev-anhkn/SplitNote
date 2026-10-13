@@ -6,9 +6,7 @@
 import Foundation
 
 extension NumberFormatter {
-    /// Shared VNĐ grouping convention: no decimals, "." as the thousands
-    /// separator. Reused by `formattedVND` and the quick-add amount field so
-    /// the two don't drift apart.
+    /// Quy ước VNĐ dùng chung: không thập phân, "." phân cách hàng nghìn.
     static let vndGrouping: NumberFormatter = {
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
@@ -23,5 +21,13 @@ extension Decimal {
     var formattedVND: String {
         let digits = NumberFormatter.vndGrouping.string(from: NSDecimalNumber(decimal: self)) ?? "\(self)"
         return "\(digits) đ"
+    }
+
+    /// VNĐ không có phần lẻ — làm tròn về số nguyên.
+    var roundedToWhole: Decimal {
+        var value = self
+        var result = Decimal()
+        NSDecimalRound(&result, &value, 0, .plain)
+        return result
     }
 }

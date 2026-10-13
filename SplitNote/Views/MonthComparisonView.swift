@@ -6,8 +6,7 @@
 import SwiftUI
 import Charts
 
-/// Biểu đồ cột so sánh tổng chi giữa các tháng, lọc theo 3/6/9 tháng gần
-/// nhất tính tới tháng hiện tại.
+/// Biểu đồ cột so sánh tổng chi 3/6/9 tháng gần nhất.
 struct MonthComparisonView: View {
     @StateObject private var viewModel: MonthComparisonViewModel
     @Environment(\.dismiss) private var dismiss
@@ -33,8 +32,7 @@ struct MonthComparisonView: View {
                     Spacer()
                 } else if let message = viewModel.errorMessage {
                     Spacer()
-                    Text(message)
-                        .foregroundStyle(.red)
+                    ErrorLabel(message: message)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal)
                     Spacer()
@@ -49,6 +47,8 @@ struct MonthComparisonView: View {
                 }
             }
             .padding(.top)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(AppBackground())
             .animation(.snappy, value: viewModel.rangeInMonths)
             .navigationTitle("So sánh theo tháng")
             #if os(iOS)
@@ -76,8 +76,8 @@ struct MonthComparisonView: View {
 
     private var statsRow: some View {
         HStack(spacing: 12) {
-            StatTile(title: "Tổng \(viewModel.rangeInMonths) tháng", value: rangeTotal.formattedVND, icon: "sum", color: .accentColor)
-            StatTile(title: "Trung bình/tháng", value: monthlyAverage.rounded.formattedVND, icon: "chart.line.flattrend.xyaxis", color: .orange)
+            StatTile(title: "Tổng \(viewModel.rangeInMonths) tháng", value: rangeTotal.formattedVND, icon: "sum", color: AppStyle.gold)
+            StatTile(title: "Trung bình/tháng", value: monthlyAverage.roundedToWhole.formattedVND, icon: "chart.line.flattrend.xyaxis", color: AppStyle.indigo)
         }
     }
 
@@ -88,7 +88,7 @@ struct MonthComparisonView: View {
                 y: .value("Số tiền", NSDecimalNumber(decimal: item.total).doubleValue)
             )
             // 1 chỉ số duy nhất theo thời gian — giữ 1 màu nhất quán.
-            .foregroundStyle(Color.accentColor.gradient)
+            .foregroundStyle(AppStyle.gold.gradient)
             .cornerRadius(6)
             .annotation(position: .top) {
                 Text(item.total.formattedVND)
@@ -126,15 +126,5 @@ private struct StatTile: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .cardStyle()
-    }
-}
-
-private extension Decimal {
-    /// VNĐ không có phần lẻ — làm tròn trung bình về số nguyên.
-    var rounded: Decimal {
-        var value = self
-        var result = Decimal()
-        NSDecimalRound(&result, &value, 0, .plain)
-        return result
     }
 }

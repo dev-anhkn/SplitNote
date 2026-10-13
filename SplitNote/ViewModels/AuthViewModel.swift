@@ -23,13 +23,12 @@ final class AuthViewModel: ObservableObject {
     }
     
     func signIn() async {
-        // 1. Mở màn đăng nhập Google.
         isSigningIn = true
         signInErrorMessage = nil
         defer { isSigningIn = false }
         
         do {
-            // 2. Đăng nhập thành công thì lưu lại user hiện tại.
+            // Mở màn đăng nhập Google, thành công thì lưu user hiện tại.
             currentUser = try await authService.signIn()
         } catch {
             signInErrorMessage = error.localizedDescription

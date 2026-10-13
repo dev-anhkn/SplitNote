@@ -10,15 +10,38 @@ import Foundation
 final class WorkspaceListViewModel: ObservableObject {
     struct Workspace: Identifiable, Hashable {
         let type: WorkspaceType
-        /// 0-based slot within `type` (up to `WorkspaceStore.maxInstancesPerType`).
+        /// Slot trong `type`, đếm từ 0.
         let index: Int
         let spreadsheetId: String
+        /// Tên người dùng đặt; chưa đặt thì là tên mặc định theo slot.
+        let name: String
         var id: String { "\(type.rawValue)-\(index)" }
-        var displayName: String { "\(type.displayName) \(index + 1)" }
+
+        static func defaultName(type: WorkspaceType, index: Int) -> String {
+            "\(type.displayName) \(index + 1)"
+        }
+
+        /// Tên file trên Drive có tiền tố để dễ nhận ra trong Drive.
+        static func driveTitle(for name: String) -> String {
+            driveTitlePrefix + name
+        }
+
+        /// Ngược lại `driveTitle`; file bị đổi tên trên Drive (mất tiền tố) thì lấy nguyên tên.
+        static func name(fromDriveTitle title: String) -> String? {
+            let name = title.hasPrefix(driveTitlePrefix) ? String(title.dropFirst(driveTitlePrefix.count)) : title
+            return name.trimmed.isEmpty ? nil : name.trimmed
+        }
+
+        /// Bỏ khoảng trắng, cắt bớt nếu quá dài; rỗng thì nil để dùng tên mặc định.
+        static func sanitizedName(_ rawName: String) -> String? {
+            let name = String(rawName.trimmed.prefix(maxNameLength))
+            return name.isEmpty ? nil : name
+        }
+
+        static let maxNameLength = 40
+        private static let driveTitlePrefix = "SplitNote - "
         
-        // Bằng `id` là đủ để so sánh/hash — không cần `WorkspaceType` phải
-        // Hashable, tránh phải sửa thêm file Model chỉ vì màn sidebar cần
-        // `selection:` là Hashable.
+        // So sánh/hash theo `id` là đủ cho `List(selection:)`.
         static func == (lhs: Workspace, rhs: Workspace) -> Bool {
             lhs.id == rhs.id
         }
@@ -28,8 +51,7 @@ final class WorkspaceListViewModel: ObservableObject {
         }
     }
     
-    /// Handed to `ExpenseListView` once a workspace's current-month tab is
-    /// confirmed ready (created or already existing).
+    /// Giao cho `ExpenseListView` khi tab tháng hiện tại đã sẵn sàng.
     struct ActiveSession: Identifiable, Hashable {
         let spreadsheetId: String
         let tabTitle: String
@@ -52,11 +74,7 @@ final class WorkspaceListViewModel: ObservableObject {
     @Published private(set) var deletingWorkspaceId: String?
     @Published var errorMessage: String?
     @Published private(set) var activeSession: ActiveSession?
-    /// Single source of truth for sidebar selection — bound directly to
-    /// `List(selection:)`. Setting it opens that workspace; setting it to nil
-    /// clears `activeSession`. Kept in the view model (not view @State) so
-    /// programmatic selection (e.g. right after `createWorkspace`) can't
-    /// desync from what the sidebar highlights.
+    /// Mục đang chọn ở sidebar — gán giá trị thì mở workspace, gán nil thì đóng session.
     @Published var selectedWorkspace: Workspace? {
         didSet {
             guard selectedWorkspace != oldValue, !isApplyingProgrammaticSelection else { return }
@@ -64,21 +82,16 @@ final class WorkspaceListViewModel: ObservableObject {
         }
     }
     private var isApplyingProgrammaticSelection = false
-    /// True until the initial Drive reconcile finishes — the "+" button only
-    /// appears after that, so it can never race a not-yet-discovered sheet
-    /// into creating a duplicate.
+    /// Đúng tới khi đối chiếu Drive lần đầu xong — tránh tạo trùng sheet chưa kịp tìm thấy.
     @Published private(set) var isLoadingWorkspaces = true
-    /// Manual refresh (separate from `isLoadingWorkspaces`, which is only
-    /// for the very first load) — re-checks that cached sheets still exist
-    /// and looks for anything newly available.
+    /// Đang tải lại thủ công (khác `isLoadingWorkspaces` chỉ cho lần đầu).
     @Published private(set) var isRefreshing = false
     
     private let sheetsService: SheetsServiceProtocol
     private let driveService: DriveServiceProtocol
     private let store: WorkspaceStore
     private let discoveryService: WorkspaceDiscoveryService
-    /// Seeds the member list of a `.family` workspace with its creator's name
-    /// (there's no cross-account invite yet — see `WorkspaceStore.members`).
+    /// Tên người tạo — thành viên đầu tiên của workspace gia đình.
     private let userDisplayName: String
 
     init(
@@ -102,27 +115,37 @@ final class WorkspaceListViewModel: ObservableObject {
     var availableTypesToCreate: [WorkspaceType] {
         WorkspaceType.allCases.filter { $0.isAvailable && store.nextAvailableIndex(for: $0) != nil }
     }
-    
+
+    /// Tên gợi ý điền sẵn khi tạo mới — đúng slot sẽ được dùng.
+    func suggestedName(for type: WorkspaceType) -> String {
+        Workspace.defaultName(type: type, index: store.nextAvailableIndex(for: type) ?? 0)
+    }
+
+    /// Tên mới nhất theo `id` — bản đang giữ ở sidebar/selection có thể là tên cũ trước khi đổi.
+    func displayName(of workspace: Workspace) -> String {
+        workspaces.first { $0.id == workspace.id }?.name ?? workspace.name
+    }
+
     func reloadWorkspaces() {
-        var result: [Workspace] = []
-        for type in WorkspaceType.allCases where type.isAvailable {
-            for index in 0..<WorkspaceStore.maxInstancesPerType {
-                if let id = store.spreadsheetId(for: type, at: index) {
-                    result.append(Workspace(type: type, index: index, spreadsheetId: id))
-                }
+        workspaces = WorkspaceType.allCases.filter(\.isAvailable).flatMap { type in
+            (0..<WorkspaceStore.maxInstancesPerType).compactMap { index in
+                store.spreadsheetId(for: type, at: index).map { makeWorkspace(type: type, index: index, spreadsheetId: $0) }
             }
         }
-        workspaces = result
+    }
+
+    private func makeWorkspace(type: WorkspaceType, index: Int, spreadsheetId: String) -> Workspace {
+        let name = store.name(for: type, at: index) ?? Workspace.defaultName(type: type, index: index)
+        return Workspace(type: type, index: index, spreadsheetId: spreadsheetId, name: name)
     }
     
-    /// Runs once on first appearance: drops workspaces deleted on Drive, then
-    /// recovers any tagged spreadsheet from another device the cache missed.
+    /// Chạy 1 lần khi mở màn: bỏ workspace đã xoá, tìm bù workspace từ thiết bị khác.
     func reconcileMissingWorkspaces() async {
         defer { isLoadingWorkspaces = false }
         await runDiscoveryReconcile()
     }
 
-    /// Manual refresh — same as `reconcileMissingWorkspaces`, for a pull/tap.
+    /// Tải lại thủ công — giống `reconcileMissingWorkspaces`.
     func refreshWorkspaces() async {
         isRefreshing = true
         errorMessage = nil
@@ -139,10 +162,28 @@ final class WorkspaceListViewModel: ObservableObject {
             errorMessage = discoveryError
         }
         reloadWorkspaces()
+        // 3. Lấy tên từ Drive — đổi tên ở thiết bị khác hoặc trên Drive cũng thấy.
+        await syncNamesFromDrive()
     }
 
-    /// Reacts to `selectedWorkspace` changing: opens the newly selected
-    /// workspace, or clears the active session when selection is cleared.
+    /// Lỗi mạng thì giữ tên đang cache, không báo lỗi.
+    private func syncNamesFromDrive() async {
+        await withTaskGroup(of: (Workspace, String?).self) { group in
+            for workspace in workspaces {
+                group.addTask { [driveService] in
+                    let title = try? await driveService.fileName(fileId: workspace.spreadsheetId)
+                    return (workspace, title.flatMap(Workspace.name(fromDriveTitle:)))
+                }
+            }
+            for await (workspace, name) in group {
+                guard let name else { continue }
+                store.setName(name, for: workspace.type, at: workspace.index)
+            }
+        }
+        reloadWorkspaces()
+    }
+
+    /// Mở workspace vừa chọn; bỏ chọn thì đóng session.
     private func applySelection(_ workspace: Workspace?) async {
         guard let workspace else {
             activeSession = nil
@@ -154,30 +195,25 @@ final class WorkspaceListViewModel: ObservableObject {
         }
     }
 
-    /// Sets `selectedWorkspace` to reflect a session already opened elsewhere
-    /// (e.g. right after `createWorkspace`) without re-running `openWorkspace`.
+    /// Đồng bộ lựa chọn với session đã mở sẵn (vd vừa tạo) mà không chạy lại `openWorkspace`.
     private func setSelection(to workspace: Workspace?) {
         isApplyingProgrammaticSelection = true
         selectedWorkspace = workspace
         isApplyingProgrammaticSelection = false
     }
 
-    /// Opens an already-created workspace: makes sure this month's tab
-    /// exists, then hands off to its expense list.
+    /// Mở workspace có sẵn: đảm bảo có tab tháng này rồi chuyển sang danh sách khoản chi.
     private func openWorkspace(_ workspace: Workspace) async {
         openingWorkspaceId = workspace.id
         errorMessage = nil
-        // Xoá session cũ ngay: nếu mở thất bại, detail pane không được phép
-        // giữ dữ liệu của workspace trước trong khi sidebar đã chọn mục mới.
+        // Xoá session cũ ngay để mở lỗi thì màn chi tiết không còn giữ dữ liệu workspace trước.
         activeSession = nil
         defer { openingWorkspaceId = nil }
 
         await open(workspace, tabTitle: Self.currentMonthTabTitle(), allowSelfHeal: true)
     }
 
-    /// Ensures `tabTitle` exists on `workspace` and opens it. Cache có thể
-    /// đang giữ 1 id cũ (sheet đã bị xoá/tạo lại ngoài app) — `allowSelfHeal`
-    /// cho phép tự tìm lại đúng 1 lần qua Drive trước khi báo đã xoá.
+    /// Đảm bảo có tab rồi mở; `allowSelfHeal` cho tìm lại id qua Drive đúng 1 lần trước khi báo đã xoá.
     private func open(_ workspace: Workspace, tabTitle: String, allowSelfHeal: Bool) async {
         do {
             try await sheetsService.ensureTab(spreadsheetId: workspace.spreadsheetId, tabTitle: tabTitle)
@@ -196,84 +232,106 @@ final class WorkspaceListViewModel: ObservableObject {
         }
     }
 
-    /// Id cached không mở được — tìm lại đúng slot này qua tag Drive (thay vì
-    /// bắt người dùng đăng xuất/đăng nhập lại để trigger reconcile) rồi mở
-    /// tiếp; chỉ báo "đã xoá" nếu tìm lại cũng không ra.
+    /// Id cache hỏng — tìm lại slot qua tag Drive rồi mở tiếp, không ra mới báo đã xoá.
     private func selfHealAndRetry(_ workspace: Workspace, tabTitle: String) async {
+        // 1. Bỏ id cũ, tìm lại qua Drive.
         store.clearSpreadsheetId(for: workspace.type, at: workspace.index)
         guard let rediscoveredId = try? await discoveryService.rediscoverWorkspace(type: workspace.type, index: workspace.index) else {
             markWorkspaceMissing(workspace)
             return
         }
+        // 2. Lưu id mới rồi mở lại (không tự sửa thêm lần nữa).
         store.setSpreadsheetId(rediscoveredId, for: workspace.type, at: workspace.index)
         reloadWorkspaces()
-        let healedWorkspace = Workspace(type: workspace.type, index: workspace.index, spreadsheetId: rediscoveredId)
+        let healedWorkspace = makeWorkspace(type: workspace.type, index: workspace.index, spreadsheetId: rediscoveredId)
         await open(healedWorkspace, tabTitle: tabTitle, allowSelfHeal: false)
     }
 
     private func markWorkspaceMissing(_ workspace: Workspace) {
         store.clearSpreadsheetId(for: workspace.type, at: workspace.index)
         reloadWorkspaces()
-        errorMessage = "\(workspace.displayName) đã bị xoá trên Drive, đã gỡ khỏi danh sách."
+        errorMessage = "\(workspace.name) đã bị xoá trên Drive, đã gỡ khỏi danh sách."
     }
     
-    /// Creates the next spreadsheet slot for `type` and tags it on Drive so
-    /// other devices can find it later. A tagging failure doesn't block the
-    /// flow — the sheet is already usable here — but is surfaced as a warning.
-    func createWorkspace(_ type: WorkspaceType) async {
+    /// Tạo spreadsheet cho slot trống kế tiếp và gắn thẻ Drive để thiết bị khác tìm thấy; tên rỗng thì dùng tên mặc định.
+    func createWorkspace(_ type: WorkspaceType, name rawName: String = "") async {
         guard type.isAvailable, let index = store.nextAvailableIndex(for: type) else { return }
         isCreating = true
         errorMessage = nil
         defer { isCreating = false }
 
         let tabTitle = Self.currentMonthTabTitle()
-        let displayName = "\(type.displayName) \(index + 1)"
-        // Gia đình bắt đầu với đúng người tạo — thêm người khác qua màn quản
-        // lý thành viên sau (chưa có invite qua tài khoản Google thật).
+        let workspaceName = Workspace.sanitizedName(rawName) ?? Workspace.defaultName(type: type, index: index)
+        // Gia đình bắt đầu chỉ với người tạo — thêm người khác ở màn thành viên.
         let members = type == .family ? [userDisplayName] : []
         do {
-            let created = try await sheetsService.createSpreadsheet(title: "SplitNote - \(displayName)", firstTabTitle: tabTitle, members: members)
-            // Lưu local ngay để dùng được dù bước gắn thẻ bên dưới có lỗi.
+            // 1. Tạo spreadsheet.
+            let created = try await sheetsService.createSpreadsheet(title: Workspace.driveTitle(for: workspaceName), firstTabTitle: tabTitle, members: members)
+            // 2. Lưu local ngay để dùng được dù gắn thẻ lỗi.
             store.setSpreadsheetId(created.spreadsheetId, for: type, at: index)
+            store.setName(workspaceName, for: type, at: index)
             reloadWorkspaces()
-            do {
-                try await driveService.tagFile(fileId: created.spreadsheetId, key: WorkspaceDiscoveryService.workspaceTypePropertyKey, value: WorkspaceDiscoveryService.tagValue(type: type, index: index))
-            } catch {
-                errorMessage = "\(displayName) đã tạo, nhưng gắn thẻ Drive thất bại nên có thể sẽ không tự tìm thấy được trên thiết bị khác: \(error.localizedDescription)"
-            }
+            // 3. Gắn thẻ Drive — lỗi chỉ cảnh báo, không chặn.
+            await tagWorkspace(created.spreadsheetId, type: type, index: index, name: workspaceName)
+            // 4. Mở luôn và đồng bộ sidebar, không chạy lại openWorkspace.
             activeSession = ActiveSession(spreadsheetId: created.spreadsheetId, tabTitle: tabTitle, spreadsheetURL: created.url, workspaceType: type)
-            // Đồng bộ sidebar với session vừa mở, không chạy lại openWorkspace.
-            setSelection(to: Workspace(type: type, index: index, spreadsheetId: created.spreadsheetId))
+            setSelection(to: makeWorkspace(type: type, index: index, spreadsheetId: created.spreadsheetId))
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 
-    /// Trashes the spreadsheet on Drive, then drops it locally (propagates to
-    /// other devices on their next prune, since a trashed file reads as deleted).
+    private func tagWorkspace(_ spreadsheetId: String, type: WorkspaceType, index: Int, name: String) async {
+        do {
+            try await driveService.tagFile(fileId: spreadsheetId, key: StorageKeys.driveWorkspaceTag, value: WorkspaceDiscoveryService.tagValue(type: type, index: index))
+        } catch {
+            errorMessage = "\(name) đã tạo, nhưng gắn thẻ Drive thất bại nên có thể sẽ không tự tìm thấy được trên thiết bị khác: \(error.localizedDescription)"
+        }
+    }
+
+    /// Đổi tên file trên Drive; hiện tên mới ngay, lỗi thì trả lại tên cũ.
+    func renameWorkspace(_ workspace: Workspace, to rawName: String) async {
+        let oldName = displayName(of: workspace)
+        guard let newName = Workspace.sanitizedName(rawName), newName != oldName else { return }
+        errorMessage = nil
+        // 1. Cập nhật local trước để sidebar/tiêu đề đổi ngay.
+        store.setName(newName, for: workspace.type, at: workspace.index)
+        reloadWorkspaces()
+        // 2. Đổi tên file trên Drive.
+        do {
+            try await driveService.renameFile(fileId: workspace.spreadsheetId, to: Workspace.driveTitle(for: newName))
+        } catch {
+            // 3. Lỗi thì trả lại tên cũ.
+            store.setName(oldName, for: workspace.type, at: workspace.index)
+            reloadWorkspaces()
+            errorMessage = "Không thể đổi tên \(oldName): \(error.localizedDescription)"
+        }
+    }
+
+    /// Chuyển sheet vào thùng rác rồi gỡ khỏi máy — thiết bị khác tự gỡ ở lần đối chiếu sau.
     func deleteWorkspace(_ workspace: Workspace) async {
         deletingWorkspaceId = workspace.id
         errorMessage = nil
         defer { deletingWorkspaceId = nil }
 
         do {
+            // 1. Chuyển file vào thùng rác trên Drive.
             try await driveService.trashFile(fileId: workspace.spreadsheetId)
+            // 2. Gỡ khỏi cache local.
             store.clearSpreadsheetId(for: workspace.type, at: workspace.index)
             reloadWorkspaces()
-            // Selection nil chỉ xoá activeSession, không gọi lại network — đi
-            // qua đường bình thường (không suppress) để activeSession được dọn.
-            if selectedWorkspace == workspace {
-                selectedWorkspace = nil
-            }
+            // 3. Đang mở thì bỏ chọn — đi qua didSet bình thường để dọn activeSession.
+            guard selectedWorkspace == workspace else { return }
+            selectedWorkspace = nil
         } catch {
-            errorMessage = "Không thể xoá \(workspace.displayName): \(error.localizedDescription)"
+            errorMessage = "Không thể xoá \(workspace.name): \(error.localizedDescription)"
         }
     }
     
     private static func editURL(spreadsheetId: String) -> URL? {
         URL(string: "https://docs.google.com/spreadsheets/d/\(spreadsheetId)/edit")
     }
-    
+
     static func currentMonthTabTitle(date: Date = AppClock.now) -> String {
         MonthTabTitle.title(for: date)
     }

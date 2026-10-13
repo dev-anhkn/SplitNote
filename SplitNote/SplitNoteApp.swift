@@ -10,16 +10,15 @@ import GoogleSignIn
 
 @main
 struct SplitNoteApp: App {
-    init() {
-        GIDSignIn.sharedInstance.configuration = GIDConfiguration(clientID: "238078721564-2f7flmonhe52quqn7c8jvuk0j3soe0p6.apps.googleusercontent.com")
-    }
-
     var body: some Scene {
         WindowGroup {
             ContentView()
+                // Nút/control hệ thống theo màu thương hiệu, không theo màu nhấn hệ thống.
+                .tint(AppStyle.gold)
                 .onOpenURL { url in
                     GIDSignIn.sharedInstance.handle(url)
                 }
         }
     }
 }
+

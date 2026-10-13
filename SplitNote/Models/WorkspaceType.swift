@@ -5,8 +5,7 @@
 
 import Foundation
 
-/// The two kinds of expense sheet a user can keep. Each maps to exactly one
-/// spreadsheet file (see `WorkspaceStore`), with a new tab added per month.
+/// 2 loại sổ chi tiêu; mỗi workspace là 1 spreadsheet, mỗi tháng 1 tab.
 enum WorkspaceType: String, CaseIterable {
     case personal
     case family

@@ -5,206 +5,89 @@
 
 import Foundation
 
-/// Owns the `.family` member list stored in "Tổng hợp", and the per-tab
-/// family columns/balance table derived from it.
+/// Quản lý danh sách thành viên `.family` trong "Tổng hợp" và cột gia đình/bảng cân đối của từng tab.
 struct SheetsMembersService {
     nonisolated init() {}
 
-    /// Source of truth is the sheet itself, not a per-device cache, so every device sees the same list.
     func fetchMembers(spreadsheetId: String) async throws -> [String] {
         let accessToken = try await GoogleAPIAuth.currentAccessToken()
         return try await fetchMembers(spreadsheetId: spreadsheetId, accessToken: accessToken)
     }
 
-    /// Callers must call `ensureTab` afterwards to refresh the currently open tab's family block.
-    func setMembers(spreadsheetId: String, members: [String]) async throws {
-        let accessToken = try await GoogleAPIAuth.currentAccessToken()
-        try await setMembers(spreadsheetId: spreadsheetId, members: members, accessToken: accessToken)
-    }
-
-    /// Parallel to `fetchMembers` — same row order, "" where a member has no linked email.
     func fetchMemberEmails(spreadsheetId: String) async throws -> [String] {
         let accessToken = try await GoogleAPIAuth.currentAccessToken()
         return try await fetchMemberEmails(spreadsheetId: spreadsheetId, accessToken: accessToken)
     }
 
-    /// Callers must call `ensureTab` afterwards to refresh the currently open tab's family block.
-    func setMemberEmails(spreadsheetId: String, emails: [String]) async throws {
+    func setMemberList(spreadsheetId: String, names: [String], emails: [String]) async throws {
         let accessToken = try await GoogleAPIAuth.currentAccessToken()
-        try await setMemberEmails(spreadsheetId: spreadsheetId, emails: emails, accessToken: accessToken)
+        try await setMemberList(spreadsheetId: spreadsheetId, names: names, emails: emails, accessToken: accessToken)
     }
 
-    /// Reads the member list from its column in "Tổng hợp". `.notFound` means
-    /// that tab doesn't exist yet on this spreadsheet (predates the feature)
-    /// — same as "no members" rather than an error.
+    /// Bỏ ô trống — chỉ trả về tên thật.
     func fetchMembers(spreadsheetId: String, accessToken: String) async throws -> [String] {
         try await fetchColumn(spreadsheetId: spreadsheetId, column: SheetsLayout.membersColumn, accessToken: accessToken)
             .compactMap { $0 }
             .filter { !$0.isEmpty }
     }
 
+    /// Giữ đúng thứ tự hàng với `fetchMembers`, "" nếu thành viên chưa gắn email.
     func fetchMemberEmails(spreadsheetId: String, accessToken: String) async throws -> [String] {
         try await fetchColumn(spreadsheetId: spreadsheetId, column: SheetsLayout.memberEmailsColumn, accessToken: accessToken)
             .map { $0 ?? "" }
     }
 
-    /// Rewrites the member list wholesale — simpler than diffing who was
-    /// added/removed.
-    func setMembers(spreadsheetId: String, members: [String], accessToken: String) async throws {
-        try await replaceColumn(spreadsheetId: spreadsheetId, column: SheetsLayout.membersColumn, headerLabel: SheetsLayout.membersHeaderLabel, values: members, accessToken: accessToken)
+    /// Ghi tên + email trong 1 request để 2 cột không bao giờ lệch nhau, kể cả khi lỗi giữa chừng.
+    func setMemberList(spreadsheetId: String, names: [String], emails: [String], accessToken: String) async throws {
+        let lastRow = SheetsLayout.maxMemberRow
+        let namesColumn = SheetsLayout.membersColumn
+        let emailsColumn = SheetsLayout.memberEmailsColumn
+        try await SheetsHTTP.batchWriteValues(spreadsheetId: spreadsheetId, ranges: [
+            (SheetsHTTP.bodyRange(tabTitle: SheetsLayout.summaryTabTitle, cells: "\(namesColumn)1:\(namesColumn)\(lastRow)"), Self.paddedColumn(header: SheetsLayout.membersHeaderLabel, values: names)),
+            (SheetsHTTP.bodyRange(tabTitle: SheetsLayout.summaryTabTitle, cells: "\(emailsColumn)1:\(emailsColumn)\(lastRow)"), Self.paddedColumn(header: SheetsLayout.memberEmailsHeaderLabel, values: emails))
+        ], accessToken: accessToken)
     }
 
-    func setMemberEmails(spreadsheetId: String, emails: [String], accessToken: String) async throws {
-        try await replaceColumn(spreadsheetId: spreadsheetId, column: SheetsLayout.memberEmailsColumn, headerLabel: SheetsLayout.memberEmailsHeaderLabel, values: emails, accessToken: accessToken)
+    /// Ghi lại toàn bộ khối gia đình của 1 tab — công thức không có tiền tố tên tab nên vẫn đúng sau `duplicateSheet`.
+    func writeFamilyBlocks(spreadsheetId: String, tabTitle: String, sheetId: Int, members: [String], accessToken: String) async throws {
+        // 1. Ghi tiêu đề H1:J1 (gia đình) + L1:O1 (bảng cân đối).
+        try await SheetsHTTP.batchWriteValues(spreadsheetId: spreadsheetId, ranges: SheetsRequests.familyHeaders(tabTitle: tabTitle), accessToken: accessToken)
+        // 2. Gợi ý thành viên làm dropdown cho cột "Ai chi".
+        try await SheetsHTTP.batchUpdate(spreadsheetId: spreadsheetId, requests: [SheetsRequests.memberValidation(sheetId: sheetId, members: members)], accessToken: accessToken)
+        // 3. Xoá bảng cân đối cũ — đơn giản hơn diff xem thành viên nào bị bớt.
+        try await SheetsHTTP.clearValues(spreadsheetId: spreadsheetId, tabTitle: tabTitle, range: "L2:O\(SheetsLayout.maxMemberRow)", accessToken: accessToken)
+        // 4. Ghi lại bảng cân đối theo danh sách hiện tại.
+        let balanceRows = members.enumerated().map { offset, member in Self.balanceRow(for: member, row: offset + 2) }
+        try await SheetsHTTP.writeValues(spreadsheetId: spreadsheetId, tabTitle: tabTitle, range: "L2:O\(members.count + 1)", values: balanceRows, accessToken: accessToken)
     }
 
-    /// Reads one "Tổng hợp" column, row-aligned (a `nil` entry means that row's cell is blank).
+    /// Đọc 1 cột của "Tổng hợp" theo đúng thứ tự hàng (`nil` = ô trống); chưa có tab thì coi như rỗng.
     private func fetchColumn(spreadsheetId: String, column: String, accessToken: String) async throws -> [String?] {
-        guard
-            let encodedTitle = SheetsHTTP.percentEncodedTabTitle(SheetsLayout.summaryTabTitle),
-            let url = URL(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetId)/values/'\(encodedTitle)'!\(column)2:\(column)200")
-        else {
-            throw SheetsServiceError.invalidResponse
-        }
-        var request = URLRequest(url: url)
-        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-        let (data, response) = try await URLSession.shared.data(for: request)
         do {
-            try SheetsHTTP.validate(response, data: data)
+            let rows = try await SheetsHTTP.readValues(spreadsheetId: spreadsheetId, tabTitle: SheetsLayout.summaryTabTitle, range: "\(column)2:\(column)\(SheetsLayout.maxMemberRow)", accessToken: accessToken)
+            return rows.map(\.first)
         } catch SheetsServiceError.notFound {
             return []
         }
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw SheetsServiceError.invalidResponse
-        }
-        let rows = json["values"] as? [[String]] ?? []
-        return rows.map(\.first)
     }
 
-    /// Clears then rewrites one "Tổng hợp" column wholesale — shared by
-    /// `setMembers`/`setMemberEmails`, simpler than diffing what changed.
-    private func replaceColumn(spreadsheetId: String, column: String, headerLabel: String, values: [String], accessToken: String) async throws {
-        guard let encodedTitle = SheetsHTTP.percentEncodedTabTitle(SheetsLayout.summaryTabTitle) else {
-            throw SheetsServiceError.invalidResponse
-        }
-        guard let clearURL = URL(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetId)/values/'\(encodedTitle)'!\(column)1:\(column)200:clear") else {
-            throw SheetsServiceError.invalidResponse
-        }
-        var clearRequest = URLRequest(url: clearURL)
-        clearRequest.httpMethod = "POST"
-        clearRequest.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-        clearRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        clearRequest.httpBody = try JSONSerialization.data(withJSONObject: [String: Any]())
-        let (clearData, clearResponse) = try await URLSession.shared.data(for: clearRequest)
-        try SheetsHTTP.validate(clearResponse, data: clearData)
-
-        guard !values.isEmpty else { return }
-        guard let writeURL = URL(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetId)/values/'\(encodedTitle)'!\(column)1:\(column)\(values.count + 1)?valueInputOption=USER_ENTERED") else {
-            throw SheetsServiceError.invalidResponse
-        }
-        var writeRequest = URLRequest(url: writeURL)
-        writeRequest.httpMethod = "PUT"
-        writeRequest.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-        writeRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        writeRequest.httpBody = try JSONSerialization.data(withJSONObject: ["values": ([headerLabel] + values).map { [$0] }])
-        let (writeData, writeResponse) = try await URLSession.shared.data(for: writeRequest)
-        try SheetsHTTP.validate(writeResponse, data: writeData)
+    /// Tiêu đề + giá trị, điền "" tới hết vùng để ghi đè (xoá) phần thừa của danh sách cũ.
+    private static func paddedColumn(header: String, values: [String]) -> [[String]] {
+        let cells = [header] + values
+        let padding = Array(repeating: "", count: max(0, SheetsLayout.maxMemberRow - cells.count))
+        return (cells + padding).map { [$0] }
     }
 
-    /// Rewrites the family header/balance table wholesale — simpler than
-    /// diffing added/removed members. Formulas have no sheet-name prefix, so
-    /// they keep pointing at their own tab even after `duplicateSheet`.
-    func writeFamilyBlocks(spreadsheetId: String, tabTitle: String, sheetId: Int, members: [String], accessToken: String) async throws {
-        guard let encodedTitle = SheetsHTTP.percentEncodedTabTitle(tabTitle) else {
-            throw SheetsServiceError.invalidResponse
-        }
-
-        // 1. Ghi header H1:J1 (gia đình) + L1:O1 (bảng cân đối).
-        var headerRequest = URLRequest(url: URL(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetId)/values:batchUpdate")!)
-        headerRequest.httpMethod = "POST"
-        headerRequest.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-        headerRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        headerRequest.httpBody = try JSONSerialization.data(withJSONObject: [
-            "valueInputOption": "USER_ENTERED",
-            "data": [
-                ["range": SheetsHTTP.bodyRange(tabTitle: tabTitle, cells: "I1:K1"), "values": [SheetsLayout.familyHeaderColumns]],
-                ["range": SheetsHTTP.bodyRange(tabTitle: tabTitle, cells: "M1:P1"), "values": [SheetsLayout.balanceHeaderColumns]]
-            ]
-        ])
-        let (headerData, headerResponse) = try await URLSession.shared.data(for: headerRequest)
-        try SheetsHTTP.validate(headerResponse, data: headerData)
-
-        // 2. Gợi ý members làm dropdown cho cột "Ai chi".
-        try await applyMemberValidation(spreadsheetId: spreadsheetId, sheetId: sheetId, members: members, accessToken: accessToken)
-
-        // 3. Xoá bảng cân đối cũ trước — đơn giản hơn diff xem thành viên nào
-        // bị bớt — rồi ghi lại đúng số dòng theo danh sách hiện tại.
-        guard let clearURL = URL(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetId)/values/'\(encodedTitle)'!L2:O200:clear") else {
-            throw SheetsServiceError.invalidResponse
-        }
-        var clearRequest = URLRequest(url: clearURL)
-        clearRequest.httpMethod = "POST"
-        clearRequest.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-        clearRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        clearRequest.httpBody = try JSONSerialization.data(withJSONObject: [String: Any]())
-        let (clearData, clearResponse) = try await URLSession.shared.data(for: clearRequest)
-        try SheetsHTTP.validate(clearResponse, data: clearData)
-
-        // 4. Tính lại từng dòng cân đối rồi ghi đè.
-        let balanceRows: [[String]] = members.enumerated().map { offset, member in
-            let row = offset + 2
-            // "" escaped thành "" gấp đôi — phòng trường hợp tên có dấu ngoặc kép.
-            let escapedMember = member.replacingOccurrences(of: "\"", with: "\"\"")
-            return [
-                member,
-                "=SUMIF(H:H,\"\(escapedMember)\",D:D)",
-                "=SUMPRODUCT(ISNUMBER(SEARCH(\",\"&\"\(escapedMember)\"&\",\",\",\"&I2:I10000&\",\"))*IFERROR(D2:D10000/J2:J10000,0))",
-                "=M\(row)-N\(row)"
-            ]
-        }
-        guard let writeURL = URL(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetId)/values/'\(encodedTitle)'!L2:O\(members.count + 1)?valueInputOption=USER_ENTERED") else {
-            throw SheetsServiceError.invalidResponse
-        }
-        var writeRequest = URLRequest(url: writeURL)
-        writeRequest.httpMethod = "PUT"
-        writeRequest.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-        writeRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        writeRequest.httpBody = try JSONSerialization.data(withJSONObject: ["values": balanceRows])
-        let (writeData, writeResponse) = try await URLSession.shared.data(for: writeRequest)
-        try SheetsHTTP.validate(writeResponse, data: writeData)
-    }
-
-    /// Suggests (but doesn't strictly enforce — Sheets has no multi-select
-    /// dropdown, so "Chi cho ai" has to stay free text anyway) `members` as
-    /// the dropdown for column H (Ai chi).
-    private func applyMemberValidation(spreadsheetId: String, sheetId: Int, members: [String], accessToken: String) async throws {
-        var request = URLRequest(url: URL(string: "https://sheets.googleapis.com/v4/spreadsheets/\(spreadsheetId):batchUpdate")!)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: [
-            "requests": [
-                [
-                    "setDataValidation": [
-                        "range": [
-                            "sheetId": sheetId,
-                            "startRowIndex": 1,
-                            "startColumnIndex": 7,
-                            "endColumnIndex": 8
-                        ],
-                        "rule": [
-                            "condition": [
-                                "type": "ONE_OF_LIST",
-                                "values": members.map { ["userEnteredValue": $0] }
-                            ],
-                            "strict": false,
-                            "showCustomUi": true
-                        ]
-                    ]
-                ]
-            ]
-        ])
-        let (data, response) = try await URLSession.shared.data(for: request)
-        try SheetsHTTP.validate(response, data: data)
+    /// [Người, Đã chi, Phải chi, Chênh lệch] của 1 thành viên trên hàng `row`.
+    private static func balanceRow(for member: String, row: Int) -> [String] {
+        // Nhân đôi dấu ngoặc kép phòng tên có chứa ".
+        let escaped = member.replacingOccurrences(of: "\"", with: "\"\"")
+        let lastRow = SheetsLayout.maxDataRow
+        return [
+            member,
+            "=SUMIF(H:H,\"\(escaped)\",D:D)",
+            "=SUMPRODUCT(ISNUMBER(SEARCH(\",\"&\"\(escaped)\"&\",\",\",\"&I2:I\(lastRow)&\",\"))*IFERROR(D2:D\(lastRow)/J2:J\(lastRow),0))",
+            "=M\(row)-N\(row)"
+        ]
     }
 }

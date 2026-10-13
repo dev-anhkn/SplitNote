@@ -5,12 +5,7 @@
 
 import SwiftUI
 
-/// Add/remove the names used by "Ai chi"/"Chi cho ai" in a `.family`
-/// workspace. Tên hiển thị là bắt buộc, nhập riêng với email — email chỉ
-/// dùng để `FamilyMembersViewModel` cấp quyền edit Drive, nên tài khoản
-/// Google tương ứng đăng nhập vào app sẽ tự thấy được workspace này. Tách
-/// riêng từ đầu để "Ai chi"/"Chi cho ai" không bao giờ lấy thẳng email làm
-/// tên hiển thị.
+/// Thêm/sửa/xoá thành viên gia đình; email nhập riêng, chỉ dùng để cấp quyền Drive.
 struct FamilyMembersView: View {
     @ObservedObject var viewModel: FamilyMembersViewModel
     @Environment(\.dismiss) private var dismiss
@@ -21,7 +16,7 @@ struct FamilyMembersView: View {
 
     var body: some View {
         Form {
-            Section("Thêm thành viên") {
+            Section {
                 HStack(spacing: 12) {
                     TextField("Tên thành viên", text: $newMemberName, prompt: Text("Tên thành viên"))
                         .labelsHidden()
@@ -31,19 +26,27 @@ struct FamilyMembersView: View {
                             .font(.title2)
                     }
                     .buttonStyle(.borderless)
-                    .disabled(isNewMemberNameEmpty)
+                    .disabled(isNewMemberNameEmpty || viewModel.isSaving)
                 }
+                TextField("Email Google (tuỳ chọn)", text: $newMemberEmail, prompt: Text("Email Google (tuỳ chọn)"))
+                    .labelsHidden()
+                    .onSubmit(addMember)
+            } header: {
+                Text("Thêm thành viên")
+            } footer: {
+                Text("Có email thì người đó được cấp quyền sửa sheet và tự thấy workspace khi đăng nhập.")
             }
 
             Section {
-                ForEach(viewModel.members, id: \.self) { member in
+                ForEach(viewModel.memberEntries) { member in
                     HStack(spacing: 12) {
-                        MemberAvatar(name: member)
-                        Text(member)
+                        MemberAvatar(name: member.name)
+                        memberRow(member)
                     }
-                    .destructiveRowAction {
-                        Task { await viewModel.removeMember(member) }
+                    .destructiveRowAction(onEdit: { beginRename(member) }) {
+                        Task { await viewModel.removeMember(member.name) }
                     }
+                    .disabled(viewModel.isSaving)
                 }
                 if viewModel.memberEntries.isEmpty {
                     Text("Chưa có thành viên nào")
@@ -59,18 +62,18 @@ struct FamilyMembersView: View {
                     }
                 }
             } footer: {
-                Text("Vuốt sang trái (hoặc chuột phải trên Mac) để xoá thành viên.")
+                Text("Vuốt sang trái để xoá; chuột phải trên Mac để sửa tên hoặc xoá.")
             }
 
             if let message = viewModel.errorMessage {
                 Section {
-                    Label(message, systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.red)
+                    ErrorLabel(message: message)
                 }
             }
         }
         .formStyle(.grouped)
         .textFieldStyle(.plain)
+        .appBackground()
         .navigationTitle("Thành viên")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
@@ -80,7 +83,7 @@ struct FamilyMembersView: View {
                 Button("Xong") { dismiss() }
             }
         }
-        .alert("Đổi tên hiển thị", isPresented: renameAlertBinding, presenting: renamingMember) { member in
+        .alert("Đổi tên hiển thị", isPresented: Binding(isPresent: $renamingMember), presenting: renamingMember) { member in
             TextField("Tên hiển thị", text: $renameText)
             Button("Lưu") {
                 Task { await viewModel.renameMember(id: member.id, to: renameText) }
@@ -104,29 +107,27 @@ struct FamilyMembersView: View {
         }
     }
 
-    private var renameAlertBinding: Binding<Bool> {
-        Binding(get: { renamingMember != nil }, set: { if !$0 { renamingMember = nil } })
-    }
-
     private func beginRename(_ member: FamilyMember) {
         renameText = member.name
         renamingMember = member
     }
 
     private var isNewMemberNameEmpty: Bool {
-        newMemberName.trimmingCharacters(in: .whitespaces).isEmpty
+        newMemberName.trimmed.isEmpty
     }
 
+    /// Chỉ xoá ô nhập khi đã lưu thành công — lỗi thì giữ nguyên chữ để sửa lại.
     private func addMember() {
-        let name = newMemberName
-        let email = newMemberEmail
-        newMemberName = ""
-        newMemberEmail = ""
-        Task { await viewModel.addMember(name: name, email: email) }
+        guard !isNewMemberNameEmpty, !viewModel.isSaving else { return }
+        Task {
+            guard await viewModel.addMember(name: newMemberName, email: newMemberEmail) else { return }
+            newMemberName = ""
+            newMemberEmail = ""
+        }
     }
 }
 
-/// Vòng tròn chữ cái đầu, màu cố định theo tên để mỗi người luôn cùng một màu.
+/// Vòng tròn chữ cái đầu tô nhạt như `IconBadge`, màu cố định theo tên để mỗi người luôn cùng một màu.
 private struct MemberAvatar: View {
     let name: String
 
@@ -140,9 +141,9 @@ private struct MemberAvatar: View {
     var body: some View {
         Text(name.prefix(1).uppercased())
             .font(.system(size: 15, weight: .semibold, design: .rounded))
-            .foregroundStyle(.white)
+            .foregroundStyle(color)
             .frame(width: 32, height: 32)
-            .background(color.gradient, in: Circle())
+            .background(color.opacity(0.18), in: Circle())
     }
 }
 

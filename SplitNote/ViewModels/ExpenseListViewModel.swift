@@ -10,30 +10,20 @@ import Foundation
 final class ExpenseListViewModel: ObservableObject {
     @Published private(set) var entries: [ExpenseEntry] = []
     @Published private(set) var isLoading = true
-    /// True once a load fails with `.notFound` — the tab (or the whole
-    /// spreadsheet) isn't there, so the list gives way to a "create it" state
-    /// instead of showing an empty list that looks like "no expenses yet".
+    /// Load gặp `.notFound` — hiện màn "tạo sheet" thay vì danh sách rỗng dễ hiểu nhầm là chưa chi gì.
     @Published private(set) var sheetMissing = false
     @Published private(set) var isCreatingSheet = false
-    /// Riêng với `isLoading` (chỉ hiện spinner toàn màn ở lần load đầu) — cho
-    /// nút reload thủ công, dùng khi có người sửa thẳng trên Sheet mà app
-    /// chưa hay biết.
-    @Published private(set) var isRefreshing = false
     @Published var errorMessage: String?
     @Published private(set) var selectedMonth: Date
 
     let spreadsheetId: String
     let workspaceType: WorkspaceType
-    /// Empty (and the whole family UI hidden) for `.personal`.
+    /// Rỗng (và ẩn toàn bộ UI gia đình) với `.personal`.
     let familyMembers: FamilyMembersViewModel
     private let sheetsService: SheetsServiceProtocol
-    /// Guards `isLoading` so only the very first load shows the full-screen
-    /// spinner — a pull-to-refresh, a reload after quick-add, or switching to
-    /// another month should update the list in place instead of blanking it
-    /// out from under the user.
+    /// Chỉ lần load đầu hiện spinner toàn màn; các lần sau cập nhật tại chỗ, không xoá trắng danh sách.
     private var hasLoadedOnce = false
-    /// Bumped on every `loadEntries()` call so a stale, still-in-flight load
-    /// (e.g. from rapid month switching) can't overwrite a newer one's result.
+    /// Tăng mỗi lần load để kết quả cũ (vd chuyển tháng nhanh) không ghi đè kết quả mới.
     private var loadGeneration = 0
     
     init(
@@ -52,15 +42,42 @@ final class ExpenseListViewModel: ObservableObject {
     var tabTitle: String { MonthTabTitle.title(for: selectedMonth) }
     var isFamily: Bool { workspaceType == .family }
     
-    /// The "create this month's sheet" flow only makes sense for the current
-    /// month — an old month that never had entries should just say so
-    /// instead of offering to create a tab for a month that's already over.
+    /// Chỉ tháng hiện tại mới đề nghị tạo sheet; tháng cũ chỉ báo là không có dữ liệu.
     var isCurrentMonth: Bool {
         Calendar.current.isDate(selectedMonth, equalTo: AppClock.now, toGranularity: .month)
     }
     
     var totalAmount: Decimal {
         entries.reduce(0) { $0 + $1.amount }
+    }
+
+    struct DaySection: Identifiable {
+        let id: String
+        let title: String
+        let total: Decimal
+        let entries: [ExpenseEntry]
+    }
+
+    /// `entries` đã xếp mới nhất trước nên chỉ cần gom các khoản liền nhau cùng ngày.
+    var daySections: [DaySection] {
+        var sections: [DaySection] = []
+        for entry in entries {
+            guard let last = sections.last, last.id == entry.date else {
+                sections.append(DaySection(id: entry.date, title: Self.dayTitle(for: entry.date), total: entry.amount, entries: [entry]))
+                continue
+            }
+            sections[sections.count - 1] = DaySection(id: last.id, title: last.title, total: last.total + entry.amount, entries: last.entries + [entry])
+        }
+        return sections
+    }
+
+    private static let topCategoryCount = 3
+
+    /// Top 3 loại chi nhiều nhất tháng — hiện trong thẻ tổng chi.
+    var topCategories: [(category: ExpenseCategory, total: Decimal)] {
+        let totals = Dictionary(grouping: entries) { ExpenseCategory.from($0.category) }
+            .mapValues { $0.reduce(0) { $0 + $1.amount } }
+        return totals.sorted { $0.value > $1.value }.prefix(Self.topCategoryCount).map { ($0.key, $0.value) }
     }
 
     func goToPreviousMonth() {
@@ -94,41 +111,45 @@ final class ExpenseListViewModel: ObservableObject {
             hasLoadedOnce = true
         }
 
-        // 2. Đọc các khoản chi + (nếu là gia đình) danh sách thành viên + email
-        // gắn theo từng người từ sheet song song — đọc thẳng từ "Tổng hợp",
-        // không cache cục bộ, nên đổi trên thiết bị nào cũng thấy ngay ở đây.
-        async let membersTask: [String] = isFamily ? ((try? await sheetsService.fetchMembers(spreadsheetId: spreadsheetId)) ?? []) : []
-        async let memberEmailsTask: [String] = isFamily ? ((try? await sheetsService.fetchMemberEmails(spreadsheetId: spreadsheetId)) ?? []) : []
+        // 2. Đọc thành viên + email song song với khoản chi (đọc thẳng từ sheet, không cache).
+        async let membersTask = fetchMembersIfFamily()
+        async let memberEmailsTask = fetchMemberEmailsIfFamily()
+        // 3. Đọc khoản chi; không có tab thì chuyển sang trạng thái "cần tạo".
+        let result: Result<[ExpenseEntry], Error>
         do {
-            let rows = try await sheetsService.fetchRows(spreadsheetId: spreadsheetId, tabTitle: tabTitle)
-            guard generation == loadGeneration else { return }
-            entries = rows
+            result = .success(try await sheetsService.fetchRows(spreadsheetId: spreadsheetId, tabTitle: tabTitle))
+        } catch {
+            result = .failure(error)
+        }
+        guard generation == loadGeneration else { return }
+        switch result {
+        case .success(let rows):
+            entries = Self.newestFirst(rows)
             sheetMissing = false
-            let (names, emails) = await (membersTask, memberEmailsTask)
-            familyMembers.setMembers(names, emails: emails)
-        } catch SheetsServiceError.notFound {
-            guard generation == loadGeneration else { return }
-            // 3. Không tìm thấy tab/sheet thì chuyển sang trạng thái "cần tạo".
+        case .failure(SheetsServiceError.notFound):
             entries = []
             sheetMissing = true
-            let (names, emails) = await (membersTask, memberEmailsTask)
-            familyMembers.setMembers(names, emails: emails)
-        } catch {
-            guard generation == loadGeneration else { return }
+        case .failure(let error):
             errorMessage = error.localizedDescription
+            return
         }
-    }
-    
-    /// Tải lại danh sách theo yêu cầu thủ công (nút reload) — cho trường hợp
-    /// khoản chi được thêm/sửa thẳng trên Google Sheet, ngoài app.
-    func refreshEntries() async {
-        isRefreshing = true
-        defer { isRefreshing = false }
-        await loadEntries()
+        // 4. Cập nhật danh sách thành viên.
+        let (names, emails) = await (membersTask, memberEmailsTask)
+        familyMembers.setMembers(names, emails: emails)
     }
 
-    /// Tạo (hoặc tạo lại) tab tháng hiện tại, rồi load lại danh sách (chắc
-    /// chắn rỗng vì vừa tạo).
+    /// Lỗi đọc thành viên không chặn danh sách khoản chi — coi như rỗng.
+    private func fetchMembersIfFamily() async -> [String] {
+        guard isFamily else { return [] }
+        return (try? await sheetsService.fetchMembers(spreadsheetId: spreadsheetId)) ?? []
+    }
+
+    private func fetchMemberEmailsIfFamily() async -> [String] {
+        guard isFamily else { return [] }
+        return (try? await sheetsService.fetchMemberEmails(spreadsheetId: spreadsheetId)) ?? []
+    }
+    
+    /// Tạo (hoặc tạo lại) tab tháng hiện tại rồi load lại danh sách.
     func createMissingSheet() async {
         isCreatingSheet = true
         errorMessage = nil
@@ -153,5 +174,21 @@ final class ExpenseListViewModel: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    /// "Hôm nay" / "Hôm qua" / "Thứ Năm, 1 thg 10"; ô ngày không đọc được thì giữ nguyên chữ gốc.
+    private static func dayTitle(for isoDate: String) -> String {
+        guard let date = DateFormatter.isoDay.date(from: isoDate) else { return isoDate }
+        let calendar = Calendar.current
+        let today = AppClock.now
+        if calendar.isDate(date, inSameDayAs: today) { return "Hôm nay" }
+        if let yesterday = calendar.date(byAdding: .day, value: -1, to: today), calendar.isDate(date, inSameDayAs: yesterday) { return "Hôm qua" }
+        return DateFormatter.vietnameseDayTitle.string(from: date)
+    }
+
+
+    /// Ngày ISO `yyyy-MM-dd` so chuỗi là đúng thứ tự; cùng ngày thì khoản nhập sau lên trước.
+    private static func newestFirst(_ rows: [ExpenseEntry]) -> [ExpenseEntry] {
+        rows.sorted { ($0.date, $0.rowIndex) > ($1.date, $1.rowIndex) }
     }
 }

@@ -17,15 +17,17 @@ SwiftUI + MVVM, không phụ thuộc backend — toàn bộ dữ liệu đọc/g
 
 ```
 SplitNote/
-├── Models/           Domain models (ExpenseEntry, ExpenseCategory, ParsedNote, WorkspaceType, ...)
-├── Services/          Google Sign-In, Drive, Sheets (HTTP, layout, setup, rows, summary) và NoteParserService
+├── Constants/         Hằng số dùng chung (SheetsLayout, StorageKeys)
+├── Models/           Domain models (ExpenseEntry, ExpenseCategory, FamilyMember, WorkspaceType, ...)
+├── Services/          Google Sign-In, Drive, Sheets (HTTP, requests, setup, rows, summary, members, migrate)
 ├── ViewModels/         Một ViewModel cho mỗi màn hình chính
 ├── Views/             SwiftUI views (Login, WorkspaceList, ExpenseList, QuickAddExpense, CategoryBreakdown, MonthComparison, FamilyMembers)
-└── Extensions/         Tiện ích dùng chung (Decimal+VND, View+DestructiveRowAction)
+└── Extensions/         Tiện ích dùng chung (Decimal+VND, DateFormatter+App, String+Trimmed, Binding+IsPresent, View+DestructiveRowAction)
+SplitNoteTests/        Unit test (Swift Testing) + service giả
 ```
 
-- `NoteParserService` — parser cho cú pháp note (xem docstring trong file để biết đầy đủ các marker).
-- `SheetsService` và các service `Sheets*` — tạo/đọc/ghi spreadsheet qua Google Sheets API, mỗi service phụ trách một nhóm trách nhiệm riêng (setup, layout, rows, summary, members).
+- `SheetsService` và các service `Sheets*` — tạo/đọc/ghi spreadsheet qua Google Sheets API, mỗi service phụ trách một nhóm trách nhiệm riêng (setup, rows, summary, members, migrate bố cục cũ).
+- `SheetsHTTP` / `SheetsRequests` — hạ tầng request và các request `batchUpdate` dựng sẵn, dùng chung cho mọi service.
 - `WorkspaceStore` — quản lý ánh xạ workspace ↔ spreadsheet ID.
 
 ## Yêu cầu

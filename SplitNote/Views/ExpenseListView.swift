@@ -5,9 +5,7 @@
 
 import SwiftUI
 
-/// Screen 2: expenses of the selected month's tab (mặc định tháng hiện tại,
-/// lùi/tiến bằng 2 nút mũi tên). Tab thiếu thì hiện màn "tạo sheet", chỉ khi
-/// đang xem tháng hiện tại — tháng cũ chưa dùng thì không cần tạo.
+/// Màn khoản chi của tháng đang chọn; thiếu tab tháng hiện tại thì hiện màn "tạo sheet".
 struct ExpenseListView: View {
     @StateObject private var viewModel: ExpenseListViewModel
     @State private var editingEntry: ExpenseEntry?
@@ -19,18 +17,48 @@ struct ExpenseListView: View {
     @State private var isReloading = false
     private let spreadsheetId: String
     private let spreadsheetURL: URL?
+    private let workspaceTitle: String
+    private let workspaceType: WorkspaceType
+    private var workspaceColor: Color { workspaceType.color }
+    @Environment(\.colorScheme) private var colorScheme
     private let userDisplayName: String
     private let userEmail: String
 
-    init(spreadsheetId: String, spreadsheetURL: URL?, workspaceType: WorkspaceType, userDisplayName: String, userEmail: String) {
+    init(spreadsheetId: String, spreadsheetURL: URL?, workspaceType: WorkspaceType, workspaceTitle: String, userDisplayName: String, userEmail: String) {
         self.spreadsheetId = spreadsheetId
         self.spreadsheetURL = spreadsheetURL
+        self.workspaceTitle = workspaceTitle
+        self.workspaceType = workspaceType
         self.userDisplayName = userDisplayName
         self.userEmail = userEmail
         _viewModel = StateObject(wrappedValue: ExpenseListViewModel(spreadsheetId: spreadsheetId, workspaceType: workspaceType))
     }
 
     var body: some View {
+        withPresentedSheets(content)
+            // Tháng đã hiện trong thẻ tổng chi — tiêu đề dùng tên workspace cho khỏi lặp.
+            .navigationTitle(workspaceTitle)
+            .toolbar { toolbarContent }
+            .confirmationDialog(
+                "Xoá khoản chi này?",
+                isPresented: Binding(isPresent: $entryPendingDeletion),
+                titleVisibility: .visible
+            ) {
+                Button("Xoá", role: .destructive, action: confirmDeletion)
+                Button("Huỷ", role: .cancel) {
+                    entryPendingDeletion = nil
+                }
+            }
+            .task {
+                await viewModel.loadEntries()
+            }
+            .refreshable {
+                await viewModel.loadEntries()
+            }
+    }
+
+    @ViewBuilder
+    private var content: some View {
         Group {
             if viewModel.isLoading {
                 ProgressView()
@@ -40,131 +68,120 @@ struct ExpenseListView: View {
                 expenseList
             }
         }
-        .navigationTitle(viewModel.tabTitle)
-        .toolbar {
-            if !viewModel.sheetMissing {
-                if viewModel.isFamily {
-                    ToolbarItem(placement: .primaryAction) {
-                        Button {
-                            isShowingMembers = true
-                        } label: {
-                            Image(systemName: "person.2")
-                        }
-                    }
-                }
-                ToolbarItem(placement: .primaryAction) {
-                    Menu {
-                        Button {
-                            isShowingCategoryBreakdown = true
-                        } label: {
-                            Label("Theo loại tháng này", systemImage: "chart.pie")
-                        }
-                        Button {
-                            isShowingMonthComparison = true
-                        } label: {
-                            Label("So sánh theo tháng", systemImage: "chart.bar")
-                        }
-                    } label: {
-                        Image(systemName: "chart.bar.xaxis")
-                    }
-                }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(AppBackground())
+    }
+
+    // MARK: - Toolbar & sheet
+
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
+        if !viewModel.sheetMissing {
+            if viewModel.isFamily {
                 ToolbarItem(placement: .primaryAction) {
                     Button {
-                        isShowingQuickAdd = true
+                        isShowingMembers = true
                     } label: {
-                        Image(systemName: "plus")
+                        Image(systemName: "person.2")
                     }
                 }
             }
-        }
-        .sheet(isPresented: $isShowingQuickAdd) {
-            NavigationStack {
-                QuickAddExpenseView(spreadsheetId: spreadsheetId, tabTitle: viewModel.tabTitle, memberEntries: viewModel.familyMembers.memberEntries, currentUserName: userDisplayName, currentUserEmail: userEmail) {
-                    Task { await viewModel.loadEntries() }
+            ToolbarItem(placement: .primaryAction) {
+                Menu {
+                    Button {
+                        isShowingCategoryBreakdown = true
+                    } label: {
+                        Label("Theo loại tháng này", systemImage: "chart.pie")
+                    }
+                    Button {
+                        isShowingMonthComparison = true
+                    } label: {
+                        Label("So sánh theo tháng", systemImage: "chart.bar")
+                    }
+                } label: {
+                    Image(systemName: "chart.bar.xaxis")
                 }
             }
-        }
-        .sheet(item: $editingEntry) { entry in
-            NavigationStack {
-                QuickAddExpenseView(spreadsheetId: spreadsheetId, tabTitle: viewModel.tabTitle, editing: entry, memberEntries: viewModel.familyMembers.memberEntries, currentUserName: userDisplayName, currentUserEmail: userEmail) {
-                    Task { await viewModel.loadEntries() }
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    isShowingQuickAdd = true
+                } label: {
+                    Image(systemName: "plus")
                 }
+                .keyboardShortcut("n", modifiers: .command)
+                .help("Thêm khoản chi (⌘N)")
             }
-        }
-        .sheet(isPresented: $isShowingMembers) {
-            NavigationStack {
-                FamilyMembersView(viewModel: viewModel.familyMembers)
-            }
-        }
-        .sheet(isPresented: $isShowingCategoryBreakdown) {
-            CategoryBreakdownView(spreadsheetId: spreadsheetId, tabTitle: viewModel.tabTitle)
-        }
-        .sheet(isPresented: $isShowingMonthComparison) {
-            MonthComparisonView(spreadsheetId: spreadsheetId)
-        }
-        .confirmationDialog(
-            "Xoá khoản chi này?",
-            isPresented: Binding(
-                get: { entryPendingDeletion != nil },
-                set: { isPresented in if !isPresented { entryPendingDeletion = nil } }
-            ),
-            titleVisibility: .visible
-        ) {
-            Button("Xoá", role: .destructive) {
-                if let entry = entryPendingDeletion {
-                    Task { await viewModel.deleteEntry(entry) }
-                }
-                entryPendingDeletion = nil
-            }
-            Button("Huỷ", role: .cancel) {
-                entryPendingDeletion = nil
-            }
-        }
-        .task {
-            await viewModel.loadEntries()
-        }
-        .refreshable {
-            await viewModel.loadEntries()
         }
     }
 
+    /// Gắn các sheet con: thêm/sửa khoản chi, thành viên, biểu đồ.
+    private func withPresentedSheets(_ content: some View) -> some View {
+        content
+            .sheet(isPresented: $isShowingQuickAdd) {
+                NavigationStack {
+                    QuickAddExpenseView(spreadsheetId: spreadsheetId, tabTitle: viewModel.tabTitle, memberEntries: viewModel.familyMembers.memberEntries, currentUserName: userDisplayName, currentUserEmail: userEmail) {
+                        Task { await viewModel.loadEntries() }
+                    }
+                }
+            }
+            .sheet(item: $editingEntry) { entry in
+                NavigationStack {
+                    QuickAddExpenseView(spreadsheetId: spreadsheetId, tabTitle: viewModel.tabTitle, editing: entry, memberEntries: viewModel.familyMembers.memberEntries, currentUserName: userDisplayName, currentUserEmail: userEmail) {
+                        Task { await viewModel.loadEntries() }
+                    }
+                }
+            }
+            .sheet(isPresented: $isShowingMembers) {
+                NavigationStack {
+                    FamilyMembersView(viewModel: viewModel.familyMembers)
+                }
+            }
+            .sheet(isPresented: $isShowingCategoryBreakdown) {
+                CategoryBreakdownView(spreadsheetId: spreadsheetId, tabTitle: viewModel.tabTitle)
+            }
+            .sheet(isPresented: $isShowingMonthComparison) {
+                MonthComparisonView(spreadsheetId: spreadsheetId)
+            }
+    }
+
+    private func confirmDeletion() {
+        defer { entryPendingDeletion = nil }
+        guard let entry = entryPendingDeletion else { return }
+        Task { await viewModel.deleteEntry(entry) }
+    }
+
+    // MARK: - Nội dung
+
     private var expenseList: some View {
         // Header ngoài List (không phải Section footer) để luôn ở trên cùng khi danh sách dài ra.
-        VStack(spacing: 12) {
-            monthNavigationHeader
+        VStack(spacing: 4) {
             summaryCard
                 .padding(.horizontal)
+                .padding(.top, 8)
 
             List {
-                if !viewModel.entries.isEmpty {
-                    Section("Khoản chi") {
-                        ForEach(viewModel.entries) { entry in
-                            Button {
-                                editingEntry = entry
-                            } label: {
-                                ExpenseRowView(entry: entry)
-                            }
-                            .buttonStyle(.plain)
-                            .destructiveRowAction {
-                                entryPendingDeletion = entry
-                            }
+                // Tiêu đề ngày là 1 hàng thường (không phải Section header) — tránh dải nền xám của header List trên macOS.
+                ForEach(viewModel.daySections) { section in
+                    DayHeaderView(title: section.title, total: section.total)
+                    ForEach(section.entries) { entry in
+                        Button {
+                            editingEntry = entry
+                        } label: {
+                            ExpenseRowView(entry: entry)
+                        }
+                        .buttonStyle(.plain)
+                        .destructiveRowAction(onEdit: { editingEntry = entry }) {
+                            entryPendingDeletion = entry
                         }
                     }
                 }
 
                 if let message = viewModel.errorMessage {
-                    Label(message, systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.red)
-                }
-
-                if let url = spreadsheetURL {
-                    Section {
-                        Link(destination: url) {
-                            Label("Mở Google Sheet", systemImage: "arrow.up.right.square")
-                        }
-                    }
+                    ErrorLabel(message: message)
                 }
             }
+            .contentMargins(.top, 0, for: .scrollContent)
+            .scrollContentBackground(.hidden)
             .overlay {
                 if viewModel.entries.isEmpty {
                     ContentUnavailableView(
@@ -177,50 +194,27 @@ struct ExpenseListView: View {
         }
     }
 
-    private var monthNavigationHeader: some View {
-        HStack {
+    /// ‹ tháng › gộp trong 1 viên thuốc, thay cho 2 nút tròn tách rời 2 đầu màn hình.
+    private var monthSwitcher: some View {
+        HStack(spacing: 2) {
             MonthStepButton(systemName: "chevron.left") {
                 viewModel.goToPreviousMonth()
             }
-
-            Spacer()
-
-            HStack(spacing: 8) {
-                Text(viewModel.tabTitle)
-                    .font(.system(.headline, design: .rounded))
-                #if os(macOS)
-                // macOS không có kéo-xuống-để-tải-lại như iOS nên cần nút riêng.
-                reloadButton
-                #endif
-            }
-
-            Spacer()
-
+            Text(MonthTabTitle.displayLabel(for: viewModel.selectedMonth))
+                .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                .monospacedDigit()
+                .frame(minWidth: 104)
             MonthStepButton(systemName: "chevron.right") {
                 viewModel.goToNextMonth()
             }
             .disabled(viewModel.isCurrentMonth)
-
-            // Reload thủ công — cho trường hợp có người sửa thẳng trên
-            // Google Sheet mà app chưa hay biết để tự cập nhật.
-            Button {
-                Task { await viewModel.refreshEntries() }
-            } label: {
-                if viewModel.isRefreshing {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Image(systemName: "arrow.clockwise")
-                }
-            }
-            .disabled(viewModel.isRefreshing)
-            .help("Tải lại danh sách khoản chi")
         }
-        .padding(.horizontal)
-        .padding(.top, 8)
+        .padding(3)
+        .background(.quaternary.opacity(0.5), in: Capsule())
     }
 
     private var reloadButton: some View {
-        ReloadButton(isLoading: isReloading, help: "Tải lại khoản chi (⌘R)") {
+        SubtleReloadButton(isLoading: isReloading, help: "Tải lại khoản chi (⌘R)") {
             Task { await reload() }
         }
         .keyboardShortcut("r", modifiers: .command)
@@ -233,25 +227,108 @@ struct ExpenseListView: View {
     }
 
     private var summaryCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Tổng chi tháng này")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            Text(viewModel.totalAmount.formattedVND)
-                .font(.system(size: 32, weight: .bold, design: .rounded))
-                .monospacedDigit()
-                .contentTransition(.numericText())
-                .lineLimit(1)
-                .minimumScaleFactor(0.6)
-            StatusPill(text: "\(viewModel.entries.count) khoản chi", color: .accentColor)
+        VStack(alignment: .leading, spacing: 16) {
+            // Hàng điều khiển: chuyển tháng bên trái, thao tác phụ bên phải.
+            HStack(spacing: 8) {
+                monthSwitcher
+                Spacer()
+                #if os(macOS)
+                // macOS không có kéo-xuống-để-tải-lại như iOS nên cần nút riêng.
+                reloadButton
+                #endif
+                if let url = spreadsheetURL {
+                    googleSheetLink(url)
+                }
+            }
+
+            // Màn rộng: top loại chi nằm bên phải số tổng; màn hẹp (iPhone) thì xuống dưới.
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .bottom, spacing: 24) {
+                    totalBlock
+                    Spacer(minLength: 0)
+                    topCategoriesBlock
+                }
+                VStack(alignment: .leading, spacing: 14) {
+                    totalBlock
+                    topCategoriesBlock
+                }
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .cardStyle()
+        .padding(AppStyle.cardPadding + 4)
+        .background(
+            LinearGradient(colors: cardGradientColors, startPoint: .topLeading, endPoint: .bottomTrailing),
+            in: RoundedRectangle(cornerRadius: 20, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(workspaceColor.opacity(0.25), lineWidth: 1)
+        )
+    }
+
+    /// Dark mode pha sang màu còn lại (vàng ↔ tím chàm) như wallpaper Golden Gate — 1 màu mờ trên nền tối trông đục.
+    private var cardGradientColors: [Color] {
+        guard colorScheme == .dark else { return [workspaceColor.opacity(0.22), workspaceColor.opacity(0.05)] }
+        let blend = workspaceType == .personal ? AppStyle.indigo : AppStyle.gold
+        return [workspaceColor.opacity(0.30), blend.opacity(0.18)]
+    }
+
+    private var totalBlock: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(viewModel.isCurrentMonth ? "Tổng chi tháng này" : "Tổng chi")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Text(viewModel.totalAmount.formattedVND)
+                    .font(.system(size: 34, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .contentTransition(.numericText())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+            }
+            StatusPill(text: "\(viewModel.entries.count) khoản chi", color: workspaceColor)
+        }
+        .fixedSize()
+    }
+
+    @ViewBuilder
+    private var topCategoriesBlock: some View {
+        if !viewModel.topCategories.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(viewModel.topCategories, id: \.category) { item in
+                    HStack(spacing: 8) {
+                        IconBadge(systemName: item.category.icon, color: item.category.color, size: 20)
+                        Text(item.category.rawValue)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer(minLength: 12)
+                        Text(item.total.formattedVND)
+                            .font(.caption.weight(.semibold))
+                            .monospacedDigit()
+                    }
+                }
+            }
+            .frame(minWidth: 200, maxWidth: 260)
+        }
+    }
+
+    private func googleSheetLink(_ url: URL) -> some View {
+        Link(destination: url) {
+            Label("Google Sheet", systemImage: "arrow.up.right")
+                .font(.caption.weight(.semibold))
+                .padding(.horizontal, 12)
+                .frame(height: 30)
+                .background(.quaternary.opacity(0.5), in: Capsule())
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help("Mở Google Sheet")
     }
 
     private var missingSheetView: some View {
         VStack(spacing: 16) {
-            monthNavigationHeader
+            monthSwitcher
+                .padding(.top, 8)
 
             Spacer()
 
@@ -270,7 +347,7 @@ struct ExpenseListView: View {
                             Label("Tạo sheet tháng này", systemImage: "plus")
                         }
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.primary)
                     .controlSize(.large)
                     .disabled(viewModel.isCreatingSheet)
                 }
@@ -283,8 +360,7 @@ struct ExpenseListView: View {
             }
 
             if let message = viewModel.errorMessage {
-                Label(message, systemImage: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.red)
+                ErrorLabel(message: message)
             }
 
             Spacer()
@@ -296,20 +372,42 @@ struct ExpenseListView: View {
 private struct MonthStepButton: View {
     let systemName: String
     let action: () -> Void
+    @Environment(\.isEnabled) private var isEnabled
 
     var body: some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.subheadline.weight(.semibold))
-                .frame(width: 34, height: 34)
-                .background(.quaternary.opacity(0.5), in: Circle())
+                .font(.caption.weight(.bold))
+                .frame(width: 28, height: 28)
+                .contentShape(Circle())
         }
         .buttonStyle(.plain)
+        .opacity(isEnabled ? 1 : 0.3)
+    }
+}
+
+private struct DayHeaderView: View {
+    let title: String
+    let total: Decimal
+
+    var body: some View {
+        HStack {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+            Spacer()
+            Text(total.formattedVND)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+        }
+        .padding(.top, 10)
+        .listRowSeparator(.hidden)
     }
 }
 
 private struct ExpenseRowView: View {
     let entry: ExpenseEntry
+    @State private var isHovering = false
 
     private var category: ExpenseCategory {
         ExpenseCategory.from(entry.category)
@@ -317,7 +415,7 @@ private struct ExpenseRowView: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            IconBadge(systemName: category.icon, color: category.color, size: 36)
+            IconBadge(systemName: category.icon, color: category.color, size: 32)
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack {
@@ -329,13 +427,9 @@ private struct ExpenseRowView: View {
                         .font(.body.weight(.semibold))
                         .monospacedDigit()
                 }
-                HStack {
-                    Text(entry.category)
-                    Spacer()
-                    Text(entry.date)
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                Text(entry.category)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
 
                 if !entry.paidBy.isEmpty {
                     Label(shareSummary, systemImage: "person.2")
@@ -346,6 +440,10 @@ private struct ExpenseRowView: View {
             }
         }
         .padding(.vertical, 2)
+        // Rê chuột (macOS) làm nổi dòng — gợi ý bấm để sửa, chuột phải để xoá.
+        .background(.quaternary.opacity(isHovering ? 0.35 : 0), in: RoundedRectangle(cornerRadius: 8).inset(by: -6))
+        .onHover { isHovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: isHovering)
         // Không có dòng này thì Spacer/padding không nhận tap được.
         .contentShape(Rectangle())
     }
@@ -358,6 +456,6 @@ private struct ExpenseRowView: View {
 
 #Preview {
     NavigationStack {
-        ExpenseListView(spreadsheetId: "preview", spreadsheetURL: nil, workspaceType: .personal, userDisplayName: "Preview User", userEmail: "preview@example.com")
+        ExpenseListView(spreadsheetId: "preview", spreadsheetURL: nil, workspaceType: .personal, workspaceTitle: "Cá nhân 1", userDisplayName: "Preview User", userEmail: "preview@example.com")
     }
 }

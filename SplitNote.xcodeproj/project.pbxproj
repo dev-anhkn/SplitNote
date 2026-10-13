@@ -11,7 +11,18 @@
 		DECBDB203054655C00B87E77 /* GoogleSignInSwift in Frameworks */ = {isa = PBXBuildFile; productRef = DECBDB1F3054655C00B87E77 /* GoogleSignInSwift */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		5E5700000000000000000007 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = DECBDAF2305464BC00B87E77 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = DECBDAF9305464BC00B87E77;
+			remoteInfo = SplitNote;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
+		5E5700000000000000000001 /* SplitNoteTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SplitNoteTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		DECBDAFA305464BC00B87E77 /* SplitNote.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SplitNote.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -26,6 +37,11 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		5E5700000000000000000002 /* SplitNoteTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = SplitNoteTests;
+			sourceTree = "<group>";
+		};
 		DECBDAFC305464BC00B87E77 /* SplitNote */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
@@ -37,6 +53,13 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		5E5700000000000000000005 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		DECBDAF7305464BC00B87E77 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -53,6 +76,7 @@
 			isa = PBXGroup;
 			children = (
 				DECBDAFC305464BC00B87E77 /* SplitNote */,
+				5E5700000000000000000002 /* SplitNoteTests */,
 				DECBDAFB305464BC00B87E77 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -61,6 +85,7 @@
 			isa = PBXGroup;
 			children = (
 				DECBDAFA305464BC00B87E77 /* SplitNote.app */,
+				5E5700000000000000000001 /* SplitNoteTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -68,6 +93,27 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		5E5700000000000000000003 /* SplitNoteTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5E5700000000000000000011 /* Build configuration list for PBXNativeTarget "SplitNoteTests" */;
+			buildPhases = (
+				5E5700000000000000000004 /* Sources */,
+				5E5700000000000000000005 /* Frameworks */,
+				5E5700000000000000000006 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				5E5700000000000000000008 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				5E5700000000000000000002 /* SplitNoteTests */,
+			);
+			name = SplitNoteTests;
+			productName = SplitNoteTests;
+			productReference = 5E5700000000000000000001 /* SplitNoteTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 		DECBDAF9305464BC00B87E77 /* SplitNote */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = DECBDB05305464BD00B87E77 /* Build configuration list for PBXNativeTarget "SplitNote" */;
@@ -102,6 +148,10 @@
 				LastSwiftUpdateCheck = 2660;
 				LastUpgradeCheck = 2700;
 				TargetAttributes = {
+					5E5700000000000000000003 = {
+						CreatedOnToolsVersion = 26.6;
+						TestTargetID = DECBDAF9305464BC00B87E77;
+					};
 					DECBDAF9305464BC00B87E77 = {
 						CreatedOnToolsVersion = 26.6;
 					};
@@ -125,11 +175,19 @@
 			projectRoot = "";
 			targets = (
 				DECBDAF9305464BC00B87E77 /* SplitNote */,
+				5E5700000000000000000003 /* SplitNoteTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		5E5700000000000000000006 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		DECBDAF8305464BC00B87E77 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -140,6 +198,13 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		5E5700000000000000000004 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		DECBDAF6305464BC00B87E77 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -149,7 +214,65 @@
 		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		5E5700000000000000000008 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = DECBDAF9305464BC00B87E77 /* SplitNote */;
+			targetProxy = 5E5700000000000000000007 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
+		5E5700000000000000000009 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = SLDZM5AKQX;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
+				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = home.SplitNoteTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/SplitNote.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/SplitNote";
+			};
+			name = Debug;
+		};
+		5E5700000000000000000010 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = SLDZM5AKQX;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
+				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = home.SplitNoteTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/SplitNote.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/SplitNote";
+			};
+			name = Release;
+		};
 		DECBDB03305464BD00B87E77 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -369,6 +492,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		5E5700000000000000000011 /* Build configuration list for PBXNativeTarget "SplitNoteTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5E5700000000000000000009 /* Debug */,
+				5E5700000000000000000010 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		DECBDAF5305464BC00B87E77 /* Build configuration list for PBXProject "SplitNote" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

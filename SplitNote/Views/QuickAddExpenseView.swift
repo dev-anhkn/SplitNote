@@ -5,11 +5,11 @@
 
 import SwiftUI
 
-/// The expense-entry form, always presented as a sheet from `ExpenseListView`
-/// — either its "+" button (add) or tapping a row (edit).
+/// Form nhập khoản chi, mở dạng sheet từ `ExpenseListView` (nút "+" để thêm, chạm hàng để sửa).
 struct QuickAddExpenseView: View {
     @StateObject private var viewModel: QuickAddExpenseViewModel
     @Environment(\.dismiss) private var dismiss
+    @FocusState private var isAmountFocused: Bool
     private let screenTitle: String
     private let onSaved: () -> Void
 
@@ -19,7 +19,7 @@ struct QuickAddExpenseView: View {
         _viewModel = StateObject(wrappedValue: QuickAddExpenseViewModel(spreadsheetId: spreadsheetId, tabTitle: tabTitle, memberEntries: memberEntries, currentUserName: currentUserName, currentUserEmail: currentUserEmail))
     }
 
-    /// Edits an existing row in place instead of appending a new one.
+    /// Sửa đúng hàng có sẵn thay vì thêm hàng mới.
     init(spreadsheetId: String, tabTitle: String, editing entry: ExpenseEntry, memberEntries: [FamilyMember] = [], currentUserName: String = "", currentUserEmail: String = "", onSaved: @escaping () -> Void) {
         self.screenTitle = "Sửa khoản chi"
         self.onSaved = onSaved
@@ -28,6 +28,13 @@ struct QuickAddExpenseView: View {
 
     var body: some View {
         Form {
+            if let summary = viewModel.lastSavedSummary {
+                Section {
+                    Label("Đã lưu: \(summary) · \(viewModel.savedCount) khoản", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                        .font(.subheadline)
+                }
+            }
             amountSection
             detailSection
             if viewModel.isFamily {
@@ -36,31 +43,50 @@ struct QuickAddExpenseView: View {
 
             if let message = viewModel.errorMessage {
                 Section {
-                    Label(message, systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.red)
+                    ErrorLabel(message: message)
+                }
+            } else if let hint = viewModel.missingFieldsHint {
+                Section {
+                    Text(hint)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
             }
         }
+        .animation(.snappy, value: viewModel.savedCount)
+        // ⌘Return: lưu rồi đóng luôn — Return thường thì lưu và giữ form để nhập tiếp.
+        .background {
+            Button("", action: { attemptSubmit(closeAfterSave: true) })
+                .keyboardShortcut(.return, modifiers: .command)
+                .opacity(0)
+                .allowsHitTesting(false)
+        }
+        .onAppear { isAmountFocused = true }
         // Style .grouped + ẩn nhãn để các dòng thẳng hàng như iOS (mặc định trên macOS là 2 cột).
         .formStyle(.grouped)
         .textFieldStyle(.plain)
+        .appBackground()
         .navigationTitle(screenTitle)
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
-                Button("Huỷ") { dismiss() }
+                // Đã lưu ít nhất 1 khoản thì không còn gì để huỷ.
+                Button(viewModel.savedCount > 0 ? "Xong" : "Huỷ") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
             }
             ToolbarItem(placement: .confirmationAction) {
-                Button(action: attemptSubmit) {
+                Button(action: { attemptSubmit(closeAfterSave: viewModel.isEditing) }) {
                     if viewModel.isSubmitting {
                         ProgressView()
                     } else {
                         Text("Lưu")
                     }
                 }
+                .buttonStyle(.primary)
                 .disabled(!viewModel.canSubmit)
+                .help(viewModel.isEditing ? "Lưu thay đổi" : "Lưu và nhập tiếp (Return) · Lưu rồi đóng (⌘Return)")
             }
         }
     }
@@ -79,11 +105,18 @@ struct QuickAddExpenseView: View {
                         #endif
                         .font(.system(size: 36, weight: .bold, design: .rounded))
                         .monospacedDigit()
-                        .onSubmit(attemptSubmit)
+                        .focused($isAmountFocused)
+                        .onSubmit { attemptSubmit() }
+                        // Co theo nội dung để "đ" đứng sát ngay sau con số.
+                        .fixedSize()
                     Text("đ")
                         .font(.system(size: 24, weight: .semibold, design: .rounded))
                         .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
                 }
+                // Cả hàng nhận click để focus, vì ô số đã co hẹp theo nội dung.
+                .contentShape(Rectangle())
+                .onTapGesture { isAmountFocused = true }
             }
             .padding(.vertical, 6)
         }
@@ -96,12 +129,42 @@ struct QuickAddExpenseView: View {
                 IconBadge(systemName: "text.alignleft", color: .gray, size: 28)
                 TextField("Nội dung", text: $viewModel.content, prompt: Text("Nội dung"))
                     .labelsHidden()
-                    .onSubmit(attemptSubmit)
+                    .onSubmit { attemptSubmit() }
             }
-            // submitScope: Enter ở đây chỉ xác nhận gợi ý Loại, không submit cả form.
-            CategoryPickerField(selection: $viewModel.category)
+            // submitScope: trên iOS Enter ở ô Loại chỉ xác nhận gợi ý, không submit cả form.
+            CategoryPickerField(selection: $viewModel.category, onSubmit: { attemptSubmit() })
                 .submitScope()
+            dateRow
         }
+    }
+
+    private var dateRow: some View {
+        HStack(spacing: 12) {
+            IconBadge(systemName: "calendar", color: AppStyle.gold, size: 28)
+            Text("Ngày")
+            Spacer(minLength: 8)
+            if viewModel.canPickToday {
+                SelectableChip(title: "Hôm nay", isSelected: viewModel.isToday, action: viewModel.pickToday)
+            }
+            if viewModel.canPickYesterday {
+                SelectableChip(title: "Hôm qua", isSelected: viewModel.isYesterday, action: viewModel.pickYesterday)
+            }
+            #if os(macOS)
+            // Nút mở lịch thay cho ô chữ ngày/tháng/năm — ô chữ giữ phím Tab lại bên trong.
+            CalendarPopoverButton(date: $viewModel.date, range: viewModel.dateRange)
+            #else
+            DatePicker("Ngày", selection: $viewModel.date, in: viewModel.dateRange, displayedComponents: .date)
+                .labelsHidden()
+            #endif
+        }
+        #if os(macOS)
+        .keyboardStepper(
+            onUp: { viewModel.shiftDate(byDays: 1) },
+            onDown: { viewModel.shiftDate(byDays: -1) },
+            onSubmit: { attemptSubmit() }
+        )
+        .help("↑/↓ đổi ngày")
+        #endif
     }
 
     private var shareSection: some View {
@@ -120,18 +183,55 @@ struct QuickAddExpenseView: View {
         }
     }
 
-    /// Shared by nút "Lưu" và Return; no-op nếu form chưa hợp lệ.
-    private func attemptSubmit() {
+    /// Dùng chung cho nút "Lưu" và Return; thêm mới thì mặc định giữ form mở để nhập tiếp.
+    private func attemptSubmit(closeAfterSave: Bool = false) {
         guard viewModel.canSubmit else { return }
         Task {
+            // 1. Lưu; lỗi thì dừng (thông báo đã hiện trên form).
             await viewModel.submitEntry()
-            if viewModel.didSave {
-                onSaved()
-                dismiss()
+            guard viewModel.didSave else { return }
+            // 2. Báo màn danh sách tải lại.
+            onSaved()
+            // 3. Đóng form, hoặc focus lại ô số tiền để nhập tiếp.
+            guard closeAfterSave || viewModel.isEditing else {
+                isAmountFocused = true
+                return
             }
+            dismiss()
         }
     }
 }
+
+#if os(macOS)
+/// Hiện ngày đang chọn, bấm thì mở lịch; chọn xong tự đóng.
+private struct CalendarPopoverButton: View {
+    @Binding var date: Date
+    let range: ClosedRange<Date>
+    @State private var isShowingCalendar = false
+
+    var body: some View {
+        Button {
+            isShowingCalendar = true
+        } label: {
+            Text(date, format: .dateTime.day().month(.twoDigits).year())
+                .monospacedDigit()
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Color.secondary.opacity(0.12), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $isShowingCalendar, arrowEdge: .bottom) {
+            DatePicker("Ngày", selection: $date, in: range, displayedComponents: .date)
+                .datePickerStyle(.graphical)
+                .labelsHidden()
+                .padding()
+        }
+        .onChange(of: date) {
+            isShowingCalendar = false
+        }
+    }
+}
+#endif
 
 #Preview {
     NavigationStack {

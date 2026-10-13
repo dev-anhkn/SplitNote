@@ -5,7 +5,7 @@
 
 import Foundation
 
-/// Single source of truth for "now" wherever month-tab logic needs it.
+/// Nguồn "bây giờ" duy nhất cho logic tab tháng.
 nonisolated enum AppClock {
     static var now: Date { Date() }
 }

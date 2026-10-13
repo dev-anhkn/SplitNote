@@ -8,19 +8,17 @@ import Foundation
 enum SheetsServiceError: Error, LocalizedError {
     case invalidResponse
     case requestFailed(String)
-    /// The spreadsheet itself is gone (deleted/moved) — HTTP 404. Distinct
-    /// from `requestFailed` so callers can react (e.g. drop it from a cached list)
-    /// instead of just surfacing raw API error text.
+    /// Mất spreadsheet hoặc tab — tách riêng để nơi gọi xử lý (gỡ khỏi cache, đề nghị tạo lại).
     case notFound
 
     var errorDescription: String? {
         switch self {
         case .invalidResponse:
-            return "Google Sheets returned an unexpected response."
+            return "Google Sheets trả về phản hồi không hợp lệ."
         case .requestFailed(let message):
             return message
         case .notFound:
-            return "This sheet no longer exists (it may have been deleted)."
+            return "Sheet này không còn tồn tại (có thể đã bị xoá)."
         }
     }
 }
@@ -31,36 +29,31 @@ struct CreatedSpreadsheet {
 }
 
 protocol SheetsServiceProtocol {
-    /// `members` non-empty only for `.family` — seeds the family columns/balance table; `[]` for `.personal`.
+    /// `members` chỉ khác rỗng với `.family` — dùng để dựng sẵn cột gia đình/bảng cân đối.
     func createSpreadsheet(title: String, firstTabTitle: String, members: [String]) async throws -> CreatedSpreadsheet
-    /// Idempotent: creates or migrates `tabTitle` and refreshes its family columns from current members. Safe on every app launch.
+    /// Idempotent: tạo hoặc migrate tab rồi làm mới cột gia đình — gọi mỗi lần mở app vẫn an toàn.
     func ensureTab(spreadsheetId: String, tabTitle: String) async throws
-    /// `paidBy`/`sharedWith` nil for a `.personal` workspace (columns left blank).
+    /// `paidBy`/`sharedWith` nil với workspace `.personal` (để trống cột gia đình).
     func appendRow(spreadsheetId: String, tabTitle: String, date: String, category: String, content: String, amount: String, paidBy: String?, sharedWith: String?) async throws
-    /// Throws `.notFound` if the spreadsheet or the tab itself doesn't exist.
+    /// Ném `.notFound` nếu không còn spreadsheet hoặc tab.
     func fetchRows(spreadsheetId: String, tabTitle: String) async throws -> [ExpenseEntry]
-    /// Leaves date and raw note untouched; `paidBy`/`sharedWith` nil for `.personal`.
-    func updateRow(spreadsheetId: String, tabTitle: String, rowIndex: Int, category: String, content: String, amount: String, paidBy: String?, sharedWith: String?) async throws
-    /// Clears cells instead of deleting the row, so other rows' `rowIndex` stay stable.
+    /// `date` nil giữ nguyên ô Ngày; `paidBy`/`sharedWith` nil với `.personal`.
+    func updateRow(spreadsheetId: String, tabTitle: String, rowIndex: Int, date: String?, category: String, content: String, amount: String, paidBy: String?, sharedWith: String?) async throws
+    /// Xoá trắng ô thay vì xoá hàng để `rowIndex` của hàng khác không bị lệch.
     func deleteRow(spreadsheetId: String, tabTitle: String, rowIndex: Int) async throws
-    /// One request for every month shown — each cell is already a formula referencing its own tab.
+    /// 1 request cho mọi tháng — mỗi ô đã là công thức trỏ vào tab tháng tương ứng.
     func fetchMonthlyTotals(spreadsheetId: String) async throws -> [(tabTitle: String, total: Decimal)]
-    /// Only categories with a non-zero total are returned.
+    /// Chỉ trả về loại chi có tổng khác 0.
     func fetchCategoryTotals(spreadsheetId: String, tabTitle: String) async throws -> [(category: String, total: Decimal)]
-    /// Source of truth is the sheet itself, not a per-device cache, so every device sees the same list.
+    /// Đọc từ chính sheet (không cache theo thiết bị) để mọi thiết bị thấy cùng danh sách.
     func fetchMembers(spreadsheetId: String) async throws -> [String]
-    /// Callers must call `ensureTab` afterwards to refresh the currently open tab's family block.
-    func setMembers(spreadsheetId: String, members: [String]) async throws
-    /// The Google account (if any) granted Drive access for each member, same row order as `fetchMembers`.
+    /// Email được cấp quyền Drive của từng thành viên, cùng thứ tự với `fetchMembers`.
     func fetchMemberEmails(spreadsheetId: String) async throws -> [String]
-    func setMemberEmails(spreadsheetId: String, emails: [String]) async throws
+    /// Ghi tên + email trong 1 request; nơi gọi phải gọi `ensureTab` sau đó để làm mới khối gia đình.
+    func setMemberList(spreadsheetId: String, names: [String], emails: [String]) async throws
 }
 
-/// Talks to the Google Sheets API using the access token of the currently
-/// signed-in `GIDGoogleUser`. Requires the `sheetsScope` requested in
-/// `GoogleAuthService.performSignIn()`. A thin facade — each concern is
-/// delegated to its own collaborator: `SheetsSpreadsheetSetupService`,
-/// `SheetsRowService`, `SheetsSummaryService`, `SheetsMembersService`.
+/// Facade mỏng cho Google Sheets API — mỗi nhóm việc giao cho 1 service con riêng.
 struct SheetsService: SheetsServiceProtocol {
     private let setup: SheetsSpreadsheetSetupService
     private let rows: SheetsRowService
@@ -72,7 +65,7 @@ struct SheetsService: SheetsServiceProtocol {
         let members = SheetsMembersService()
         self.summary = summary
         self.members = members
-        self.setup = SheetsSpreadsheetSetupService(summaryService: summary, membersService: members)
+        self.setup = SheetsSpreadsheetSetupService(summaryService: summary, membersService: members, migrationService: SheetsLegacyMigrationService())
         self.rows = SheetsRowService()
     }
 
@@ -92,8 +85,8 @@ struct SheetsService: SheetsServiceProtocol {
         try await rows.fetchRows(spreadsheetId: spreadsheetId, tabTitle: tabTitle)
     }
 
-    func updateRow(spreadsheetId: String, tabTitle: String, rowIndex: Int, category: String, content: String, amount: String, paidBy: String?, sharedWith: String?) async throws {
-        try await rows.updateRow(spreadsheetId: spreadsheetId, tabTitle: tabTitle, rowIndex: rowIndex, category: category, content: content, amount: amount, paidBy: paidBy, sharedWith: sharedWith)
+    func updateRow(spreadsheetId: String, tabTitle: String, rowIndex: Int, date: String?, category: String, content: String, amount: String, paidBy: String?, sharedWith: String?) async throws {
+        try await rows.updateRow(spreadsheetId: spreadsheetId, tabTitle: tabTitle, rowIndex: rowIndex, date: date, category: category, content: content, amount: amount, paidBy: paidBy, sharedWith: sharedWith)
     }
 
     func deleteRow(spreadsheetId: String, tabTitle: String, rowIndex: Int) async throws {
@@ -112,15 +105,11 @@ struct SheetsService: SheetsServiceProtocol {
         try await members.fetchMembers(spreadsheetId: spreadsheetId)
     }
 
-    func setMembers(spreadsheetId: String, members: [String]) async throws {
-        try await self.members.setMembers(spreadsheetId: spreadsheetId, members: members)
-    }
-
     func fetchMemberEmails(spreadsheetId: String) async throws -> [String] {
         try await members.fetchMemberEmails(spreadsheetId: spreadsheetId)
     }
 
-    func setMemberEmails(spreadsheetId: String, emails: [String]) async throws {
-        try await members.setMemberEmails(spreadsheetId: spreadsheetId, emails: emails)
+    func setMemberList(spreadsheetId: String, names: [String], emails: [String]) async throws {
+        try await members.setMemberList(spreadsheetId: spreadsheetId, names: names, emails: emails)
     }
 }

@@ -14,23 +14,20 @@ final class MonthComparisonViewModel: ObservableObject {
         var id: Date { month }
         
         var label: String {
-            let formatter = DateFormatter()
-            formatter.dateFormat = "MM/yy"
-            return formatter.string(from: month)
+            DateFormatter.shortMonth.string(from: month)
         }
     }
-    
-    static let rangeOptions = [3, 6, 9]
     
     @Published private(set) var monthlyTotals: [MonthTotal] = []
     @Published private(set) var isLoading = false
     @Published var errorMessage: String?
-    @Published var rangeInMonths = 3 {
+    /// Các khoảng so sánh cho người dùng chọn.
+    static let rangeOptions = [3, 6, 9]
+
+    @Published var rangeInMonths = rangeOptions[0] {
         didSet {
             guard rangeInMonths != oldValue else { return }
-            // Dữ liệu của mọi tháng đã có sẵn trong `totalsByTabTitle` từ lần
-            // `load()` đầu — đổi range chỉ cần cắt lại danh sách, không cần
-            // gọi lại API.
+            // Dữ liệu mọi tháng đã có sẵn từ `load()` — chỉ cắt lại, không gọi API.
             recomputeMonthlyTotals()
         }
     }
@@ -44,8 +41,7 @@ final class MonthComparisonViewModel: ObservableObject {
         self.sheetsService = sheetsService
     }
 
-    /// Đọc toàn bộ tổng theo tháng từ tab "Tổng hợp" — 1 lần gọi API duy
-    /// nhất dù đang xem 3, 6 hay 9 tháng.
+    /// Đọc tổng mọi tháng từ "Tổng hợp" — 1 lần gọi API dù xem 3, 6 hay 9 tháng.
     func load() async {
         isLoading = true
         errorMessage = nil
@@ -55,8 +51,7 @@ final class MonthComparisonViewModel: ObservableObject {
             let rows = try await sheetsService.fetchMonthlyTotals(spreadsheetId: spreadsheetId)
             totalsByTabTitle = Dictionary(rows.map { ($0.tabTitle, $0.total) }, uniquingKeysWith: { first, _ in first })
         } catch SheetsServiceError.notFound {
-            // Chưa có tab "Tổng hợp" (spreadsheet cũ chưa mở lại lần nào từ
-            // khi có tính năng này) → coi như chưa có tháng nào.
+            // Spreadsheet cũ chưa có "Tổng hợp" → coi như chưa có tháng nào.
             totalsByTabTitle = [:]
         } catch {
             errorMessage = error.localizedDescription

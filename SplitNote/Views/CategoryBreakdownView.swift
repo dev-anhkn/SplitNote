@@ -6,9 +6,7 @@
 import SwiftUI
 import Charts
 
-/// Donut chart tổng chi theo Loại của 1 tháng — chỉ hiện category đang có
-/// giá trị (`ViewModel.totals` đã lọc >0), kèm legend liệt kê số tiền/%.
-/// Tự tải dữ liệu từ tab "Tổng hợp" thay vì nhận sẵn từ màn danh sách.
+/// Biểu đồ donut tổng chi theo Loại của 1 tháng, kèm chú thích số tiền/% — tự tải từ "Tổng hợp".
 struct CategoryBreakdownView: View {
     @StateObject private var viewModel: CategoryBreakdownViewModel
     @Environment(\.dismiss) private var dismiss
@@ -27,8 +25,7 @@ struct CategoryBreakdownView: View {
                 if viewModel.isLoading && viewModel.totals.isEmpty {
                     ProgressView()
                 } else if let message = viewModel.errorMessage {
-                    Text(message)
-                        .foregroundStyle(.red)
+                    ErrorLabel(message: message)
                         .multilineTextAlignment(.center)
                         .padding()
                 } else if viewModel.totals.isEmpty {
@@ -43,6 +40,8 @@ struct CategoryBreakdownView: View {
                     }
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(AppBackground())
             .navigationTitle(viewModel.tabTitle)
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)

@@ -22,8 +22,7 @@ final class CategoryBreakdownViewModel: ObservableObject {
         self.sheetsService = sheetsService
     }
 
-    /// Đọc trực tiếp hàng của tháng này trong tab "Tổng hợp" — không cần
-    /// tải toàn bộ khoản chi rồi tự group/sum nữa.
+    /// Đọc thẳng hàng của tháng trong "Tổng hợp" thay vì tải hết khoản chi rồi tự cộng.
     func load() async {
         isLoading = true
         errorMessage = nil
