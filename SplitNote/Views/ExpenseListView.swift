@@ -55,7 +55,18 @@ struct ExpenseListView: View {
             .refreshable {
                 await viewModel.loadEntries()
             }
+            #if os(macOS)
+            .focusedSceneValue(\.quickAddAction, quickAddAction)
+            #endif
     }
+
+    #if os(macOS)
+    /// Chỉ cho ⌘N mở Quick Add khi tháng đã có sheet; chưa có thì tắt lệnh.
+    private var quickAddAction: (() -> Void)? {
+        guard !viewModel.sheetMissing else { return nil }
+        return { isShowingQuickAdd = true }
+    }
+    #endif
 
     @ViewBuilder
     private var content: some View {
@@ -108,7 +119,10 @@ struct ExpenseListView: View {
                 } label: {
                     Image(systemName: "plus")
                 }
+                #if os(iOS)
+                // macOS dùng lệnh menu ⌘N (SplitNoteCommands) nên không gắn phím ở nút.
                 .keyboardShortcut("n", modifiers: .command)
+                #endif
                 .help("Thêm khoản chi (⌘N)")
             }
         }
@@ -183,7 +197,9 @@ struct ExpenseListView: View {
             .contentMargins(.top, 0, for: .scrollContent)
             .scrollContentBackground(.hidden)
             .overlay {
-                if viewModel.entries.isEmpty {
+                if viewModel.isSwitchingMonth {
+                    ProgressView()
+                } else if viewModel.entries.isEmpty {
                     ContentUnavailableView(
                         "Chưa có khoản chi",
                         systemImage: "tray",

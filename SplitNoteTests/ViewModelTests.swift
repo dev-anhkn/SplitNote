@@ -58,6 +58,18 @@ struct ExpenseListViewModelTests {
         #expect(!viewModel.sheetMissing)
         #expect(viewModel.errorMessage == "boom")
     }
+
+    @Test func switchingMonthDropsPreviousEntriesImmediately() async {
+        let viewModel = makeViewModel(rows: [.fake(row: 2, date: "2026-09-01", amount: 100)])
+        await viewModel.loadEntries()
+
+        viewModel.goToPreviousMonth()
+
+        #expect(viewModel.entries.isEmpty)
+        #expect(viewModel.isSwitchingMonth)
+        await viewModel.loadEntries()
+        #expect(!viewModel.isSwitchingMonth)
+    }
 }
 
 @MainActor
@@ -93,6 +105,19 @@ struct QuickAddExpenseViewModelTests {
         viewModel.amountText = "48000"
         #expect(viewModel.missingFieldsHint == nil)
         #expect(viewModel.canSubmit)
+    }
+
+    @Test func doubleSubmitSavesOnce() async {
+        let service = FakeSheetsService()
+        let viewModel = QuickAddExpenseViewModel(spreadsheetId: "s", tabTitle: tabTitle, sheetsService: service)
+        viewModel.content = "Cafe"
+        viewModel.amountText = "50000"
+
+        async let first: Void = viewModel.submitEntry()
+        async let second: Void = viewModel.submitEntry()
+        _ = await (first, second)
+
+        #expect(service.appendedRowCount == 1)
     }
 
     @Test func shiftDateStaysInsideTabMonth() {

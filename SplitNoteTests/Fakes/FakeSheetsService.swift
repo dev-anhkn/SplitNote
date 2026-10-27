@@ -12,6 +12,7 @@ final class FakeSheetsService: SheetsServiceProtocol {
     var fetchRowsError: Error?
     var setMemberListError: Error?
     private(set) var savedMemberLists: [(names: [String], emails: [String])] = []
+    private(set) var appendedRowCount = 0
 
     func createSpreadsheet(title: String, firstTabTitle: String, members: [String]) async throws -> CreatedSpreadsheet {
         CreatedSpreadsheet(spreadsheetId: "fake", url: URL(string: "https://example.com")!)
@@ -19,7 +20,11 @@ final class FakeSheetsService: SheetsServiceProtocol {
 
     func ensureTab(spreadsheetId: String, tabTitle: String) async throws {}
 
-    func appendRow(spreadsheetId: String, tabTitle: String, date: String, category: String, content: String, amount: String, paidBy: String?, sharedWith: String?) async throws {}
+    /// Nhường 1 nhịp như request mạng thật để test được việc gọi chồng nhau.
+    func appendRow(spreadsheetId: String, tabTitle: String, date: String, category: String, content: String, amount: String, paidBy: String?, sharedWith: String?) async throws {
+        await Task.yield()
+        appendedRowCount += 1
+    }
 
     func fetchRows(spreadsheetId: String, tabTitle: String) async throws -> [ExpenseEntry] {
         if let fetchRowsError { throw fetchRowsError }

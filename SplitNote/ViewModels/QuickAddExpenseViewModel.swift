@@ -173,7 +173,8 @@ final class QuickAddExpenseViewModel: ObservableObject {
     }
     
     func submitEntry() async {
-        guard let amount = parsedAmount else { return }
+        // Return bấm nhanh 2 lần tạo 2 Task trước khi kịp bật `isSubmitting` — chặn lần thứ 2 tại đây.
+        guard !isSubmitting, let amount = parsedAmount else { return }
         isSubmitting = true
         errorMessage = nil
         defer { isSubmitting = false }

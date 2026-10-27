@@ -171,12 +171,12 @@ final class WorkspaceListViewModel: ObservableObject {
         await withTaskGroup(of: (Workspace, String?).self) { group in
             for workspace in workspaces {
                 group.addTask { [driveService] in
-                    let title = try? await driveService.fileName(fileId: workspace.spreadsheetId)
-                    return (workspace, title.flatMap(Workspace.name(fromDriveTitle:)))
+                    (workspace, try? await driveService.fileName(fileId: workspace.spreadsheetId))
                 }
             }
-            for await (workspace, name) in group {
-                guard let name else { continue }
+            // Đổi tiêu đề → tên trên MainActor vì `Workspace` bị cô lập MainActor theo mặc định.
+            for await (workspace, title) in group {
+                guard let name = title.flatMap({ Workspace.name(fromDriveTitle: $0) }) else { continue }
                 store.setName(name, for: workspace.type, at: workspace.index)
             }
         }

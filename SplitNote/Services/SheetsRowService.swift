@@ -45,10 +45,9 @@ struct SheetsRowService {
     /// Xoá trắng thay vì xoá hàng — xoá hàng sẽ dịch các hàng dưới, lệch `rowIndex` và công thức Tổng cộng.
     func deleteRow(spreadsheetId: String, tabTitle: String, rowIndex: Int) async throws {
         let accessToken = try await GoogleAPIAuth.currentAccessToken()
-        // 1. Xoá trắng A:D — `fetchRows` sẽ tự bỏ qua hàng này.
-        try await SheetsHTTP.clearValues(spreadsheetId: spreadsheetId, tabTitle: tabTitle, range: "A\(rowIndex):D\(rowIndex)", accessToken: accessToken)
-        // 2. Xoá luôn H:J — vô hại với tab cá nhân vì ở đó không có gì.
-        try await SheetsHTTP.clearValues(spreadsheetId: spreadsheetId, tabTitle: tabTitle, range: "H\(rowIndex):J\(rowIndex)", accessToken: accessToken)
+        // Xoá A:D + H:J trong 1 request để không bao giờ chỉ xoá được một nửa; H:J vô hại với tab cá nhân.
+        let ranges = ["A\(rowIndex):D\(rowIndex)", "H\(rowIndex):J\(rowIndex)"].map { SheetsHTTP.bodyRange(tabTitle: tabTitle, cells: $0) }
+        try await SheetsHTTP.batchClearValues(spreadsheetId: spreadsheetId, ranges: ranges, accessToken: accessToken)
     }
 
     /// Ghi H:J của 1 hàng; J luôn là công thức đếm tên trong I nên tự đúng khi sửa người chia.

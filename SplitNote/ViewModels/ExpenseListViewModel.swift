@@ -15,6 +15,8 @@ final class ExpenseListViewModel: ObservableObject {
     @Published private(set) var isCreatingSheet = false
     @Published var errorMessage: String?
     @Published private(set) var selectedMonth: Date
+    /// Đang tải tháng vừa chuyển tới — danh sách đã xoá nên hiện spinner thay vì "Chưa có khoản chi".
+    @Published private(set) var isSwitchingMonth = false
 
     let spreadsheetId: String
     let workspaceType: WorkspaceType
@@ -93,6 +95,9 @@ final class ExpenseListViewModel: ObservableObject {
     private func shiftSelectedMonth(by value: Int) {
         guard let newMonth = Calendar.current.date(byAdding: .month, value: value, to: selectedMonth) else { return }
         selectedMonth = newMonth
+        // Bỏ khoản chi tháng cũ ngay — giữ lại thì sửa/xoá sẽ dùng rowIndex tháng cũ trên tab tháng mới.
+        entries = []
+        isSwitchingMonth = true
         familyMembers.currentTabTitle = tabTitle
         Task { await loadEntries() }
     }
@@ -122,6 +127,7 @@ final class ExpenseListViewModel: ObservableObject {
             result = .failure(error)
         }
         guard generation == loadGeneration else { return }
+        isSwitchingMonth = false
         switch result {
         case .success(let rows):
             entries = Self.newestFirst(rows)
@@ -185,7 +191,6 @@ final class ExpenseListViewModel: ObservableObject {
         if let yesterday = calendar.date(byAdding: .day, value: -1, to: today), calendar.isDate(date, inSameDayAs: yesterday) { return "Hôm qua" }
         return DateFormatter.vietnameseDayTitle.string(from: date)
     }
-
 
     /// Ngày ISO `yyyy-MM-dd` so chuỗi là đúng thứ tự; cùng ngày thì khoản nhập sau lên trước.
     private static func newestFirst(_ rows: [ExpenseEntry]) -> [ExpenseEntry] {
